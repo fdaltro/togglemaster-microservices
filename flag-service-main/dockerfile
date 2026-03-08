@@ -1,0 +1,18 @@
+# Stage 1: Install dependencies
+FROM python:3.9-slim AS builder
+WORKDIR /app
+RUN apt-get update && apt-get install -y gcc libpq-dev
+COPY requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
+
+# Stage 2: Final
+FROM python:3.9-slim
+WORKDIR /app
+# Instala apenas a biblioteca runtime do Postgres necessária
+RUN apt-get update && apt-get install -y libpq5 && rm -rf /var/lib/apt/lists/*
+# Copia as libs instaladas no estágio anterior
+COPY --from=builder /root/.local /root/.local
+COPY . .
+ENV PATH=/root/.local/bin:$PATH
+EXPOSE 8002
+CMD ["gunicorn", "--bind", "0.0.0.0:8002", "app:app"]
