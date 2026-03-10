@@ -10,7 +10,7 @@ FROM python:3.9-slim
 WORKDIR /app
 # Instala apenas a biblioteca runtime do Postgres necessária
 RUN apt-get update && apt-get install -y libpq5 && rm -rf /var/lib/apt/lists/*
-# Copia as libs instaladas no estágio anterior
+# Copia as libs instaladas no estágio anterior - teste
 COPY --from=builder /root/.local /root/.local
 COPY . .
 ENV PATH=/root/.local/bin:$PATH
