@@ -3,13 +3,14 @@ name: CI - Build and Push to ECR
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # Permite rodar manualmente pelo painel do GitHub
+  workflow_dispatch:
 
 jobs:
   build-and-push:
     name: Build and Push Microservices
     runs-on: ubuntu-latest
-    environment: AWS # - Necessário para acessar os secrets de ambiente
+    # ESSENCIAL: Declarar o environment onde as chaves estão (conforme sua imagem)
+    environment: AWS 
 
     steps:
       - name: Checkout Code
@@ -18,37 +19,31 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }} #
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }} #
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }} # - Obrigatório para AWS Academy
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
 
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # O passo abaixo realiza o build e push para cada um dos 5 serviços
       - name: Build and Push Images
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          # Lista de serviços e suas respectivas pastas
+          # Lista atualizada com o sufixo "-main" conforme imagem do repositório
           SERVICES=("auth" "flag" "targeting" "evaluation" "analytics")
           
           for SERVICE in "${SERVICES[@]}"; do
             echo "Building $SERVICE service..."
             
-            # O nome do repositório segue o padrão definido no seu Terraform
             REPO_NAME="togglemaster-$SERVICE"
             
-            # Build da imagem (assume que o Dockerfile está dentro da pasta do serviço)
-            docker build -t $ECR_REGISTRY/$REPO_NAME:latest ./$SERVICE-service
+            # Ajustado para o caminho exato das suas pastas: ./nome-service-main
+            docker build -t $ECR_REGISTRY/$REPO_NAME:latest ./$SERVICE-service-main
             
-            # Push para o ECR
             docker push $ECR_REGISTRY/$REPO_NAME:latest
             
             echo "Pushed $SERVICE to ECR successfully."
           done
-
-      - name: Image Scan Results
-        run: echo "As imagens foram enviadas. Verifique o console do ECR para os resultados do scan automático."
