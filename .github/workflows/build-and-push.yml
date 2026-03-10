@@ -9,7 +9,6 @@ jobs:
   build-and-push:
     name: Build and Push Microservices
     runs-on: ubuntu-latest
-    # ESSENCIAL: Declarar o environment onde as chaves estão (conforme sua imagem)
     environment: AWS 
 
     steps:
@@ -32,18 +31,24 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          # Lista atualizada com o sufixo "-main" conforme imagem do repositório
+          # Gera o hash curto do commit (7 caracteres)
+          VERSION="v1.0.0-$(echo ${{ github.sha }} | cut -c1-7)"
+          echo "Version to be used: $VERSION"
+
           SERVICES=("auth" "flag" "targeting" "evaluation" "analytics")
           
           for SERVICE in "${SERVICES[@]}"; do
             echo "Building $SERVICE service..."
-            
             REPO_NAME="togglemaster-$SERVICE"
             
-            # Ajustado para o caminho exato das suas pastas: ./nome-service-main
-            docker build -t $ECR_REGISTRY/$REPO_NAME:latest ./$SERVICE-service-main
+            # Build com duas tags: a específica do commit e a 'latest' para facilitar testes
+            docker build -t $ECR_REGISTRY/$REPO_NAME:$VERSION \
+                         -t $ECR_REGISTRY/$REPO_NAME:latest \
+                         ./$SERVICE-service-main
             
+            # Push de ambas as tags
+            docker push $ECR_REGISTRY/$REPO_NAME:$VERSION
             docker push $ECR_REGISTRY/$REPO_NAME:latest
             
-            echo "Pushed $SERVICE to ECR successfully."
+            echo "Pushed $SERVICE version $VERSION to ECR."
           done
