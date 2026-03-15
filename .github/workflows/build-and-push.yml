@@ -34,26 +34,27 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          # Gera a tag baseada no commit hash curto
+          # 1. Gera a tag baseada no commit hash curto para rastreabilidade
           VERSION="v1.0.0-$(echo ${{ github.sha }} | cut -c1-7)"
           SERVICES=("auth" "flag" "targeting" "evaluation" "analytics")
           
           for SERVICE in "${SERVICES[@]}"; do
             REPO_NAME="togglemaster-$SERVICE"
-            echo "Building $SERVICE..."
+            echo "Building image for $SERVICE..."
+            # 2. Realiza o build apontando para as pastas específicas de cada serviço
             docker build -t $ECR_REGISTRY/$REPO_NAME:$VERSION ./$SERVICE-service-main
             docker push $ECR_REGISTRY/$REPO_NAME:$VERSION
           done
-          # Salva a versão no ambiente para os próximos passos
+          # 3. Exporta a versão para ser usada no commit do GitOps
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
-      # --- CONEXÃO COM O REPOSITÓRIO GITOPS ---
+      # --- CONEXÃO E ATUALIZAÇÃO DO REPOSITÓRIO GITOPS ---
 
       - name: Checkout GitOps Repo
         uses: actions/checkout@v4
         with:
           repository: fdaltro/togglemaster-gitops
-          token: ${{ secrets.GIT_TOKEN }} # Usando seu segredo já configurado
+          token: ${{ secrets.GIT_TOKEN }}
           path: gitops-repo
 
       - name: Update Kustomize Tags
@@ -62,15 +63,12 @@ jobs:
           ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
           SERVICES=("auth" "flag" "targeting" "evaluation" "analytics")
           
-          # Entra na pasta onde estão as configurações de apps
           cd gitops-repo/apps
           
           for SERVICE in "${SERVICES[@]}"; do
-            echo "Atualizando manifestos de $SERVICE para a versão $VERSION"
+            echo "Atualizando âncora fixa 'togglemaster-$SERVICE' para a versão $VERSION"
             cd $SERVICE
-            # O kustomize edit troca a tag no arquivo kustomization.yaml automaticamente
-            # O 'togglemaster-$SERVICE' é a chave fixa que está no deployment.yaml
-            # O '$ECR_REGISTRY/togglemaster-$SERVICE:$VERSION' é o valor dinâmico da AWS-2
+            # 4. O comando 'kustomize edit' localiza a âncora e substitui pelo endereço ECR completo
             kustomize edit set image togglemaster-$SERVICE=$ECR_REGISTRY/togglemaster-$SERVICE:$VERSION
             cd ..
           done
@@ -81,5 +79,6 @@ jobs:
           git config --global user.email "fabriciodaltro@gmail.com"
           git config --global user.name "fdaltro"
           git add .
+          # 5. Commit informativo para facilitar o rollback se necessário
           git commit -m "chore: deploy version ${{ env.VERSION }} [skip ci]" || echo "Sem mudanças"
           git push origin main
