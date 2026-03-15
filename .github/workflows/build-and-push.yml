@@ -1,9 +1,12 @@
-name: CI - Build and Push to ECR
+name: CI - Build, Push and Update GitOps
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-and-push:
@@ -11,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
    
     steps:
-      - name: Checkout Code
+      - name: Checkout Application Code
         uses: actions/checkout@v4
 
       - name: Configure AWS Credentials
@@ -27,28 +30,54 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and Push Images
+        id: build-images
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          # Gera a tag baseada no hash curto do commit para rastreabilidade
+          # Gera a tag baseada no commit hash curto
           VERSION="v1.0.0-$(echo ${{ github.sha }} | cut -c1-7)"
-          echo "Utilizando a versão: $VERSION"
-
-          # Lista das pastas conforme aparecem no seu repositório
           SERVICES=("auth" "flag" "targeting" "evaluation" "analytics")
           
           for SERVICE in "${SERVICES[@]}"; do
-            echo "------------------------------------------------"
-            echo "Iniciando build do serviço: $SERVICE"
-            
-            # Nome do repositório definido no Terraform
             REPO_NAME="togglemaster-$SERVICE"
-            
-            # Build utilizando apenas a tag de versão para respeitar a imutabilidade
+            echo "Building $SERVICE..."
             docker build -t $ECR_REGISTRY/$REPO_NAME:$VERSION ./$SERVICE-service-main
-            
-            # Push para o ECR
             docker push $ECR_REGISTRY/$REPO_NAME:$VERSION
-            
-            echo "Serviço $SERVICE enviado com sucesso com a tag $VERSION"
           done
+          # Salva a versão no ambiente para os próximos passos
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      # --- CONEXÃO COM O REPOSITÓRIO GITOPS ---
+
+      - name: Checkout GitOps Repo
+        uses: actions/checkout@v4
+        with:
+          repository: fdaltro/togglemaster-gitops
+          token: ${{ secrets.GIT_TOKEN }} # Usando seu segredo já configurado
+          path: gitops-repo
+
+      - name: Update Kustomize Tags
+        run: |
+          VERSION=${{ env.VERSION }}
+          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          SERVICES=("auth" "flag" "targeting" "evaluation" "analytics")
+          
+          # Entra na pasta onde estão as configurações de apps
+          cd gitops-repo/apps
+          
+          for SERVICE in "${SERVICES[@]}"; do
+            echo "Atualizando manifestos de $SERVICE para a versão $VERSION"
+            cd $SERVICE
+            # O kustomize edit troca a tag no arquivo kustomization.yaml automaticamente
+            kustomize edit set image $ECR_REGISTRY/togglemaster-$SERVICE=$ECR_REGISTRY/togglemaster-$SERVICE:$VERSION
+            cd ..
+          done
+
+      - name: Commit and Push to GitOps Repo
+        run: |
+          cd gitops-repo
+          git config --global user.email "fabriciodaltro@gmail.com"
+          git config --global user.name "fdaltro"
+          git add .
+          git commit -m "chore: deploy version ${{ env.VERSION }} [skip ci]" || echo "Sem mudanças"
+          git push origin main
