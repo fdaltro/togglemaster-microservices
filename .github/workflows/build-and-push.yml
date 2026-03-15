@@ -70,7 +70,7 @@ jobs:
             cd $SERVICE
             # O kustomize edit troca a tag no arquivo kustomization.yaml automaticamente
             # O 'togglemaster-$SERVICE' é a chave fixa que está no deployment.yaml
-            # O '$ECR_REGISTRY/togglemaster-$SERVICE:$VERSION' é o valor dinâmico da AWS
+            # O '$ECR_REGISTRY/togglemaster-$SERVICE:$VERSION' é o valor dinâmico da AWS-2
             kustomize edit set image togglemaster-$SERVICE=$ECR_REGISTRY/togglemaster-$SERVICE:$VERSION
             cd ..
           done
