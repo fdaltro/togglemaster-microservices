@@ -83,6 +83,7 @@ jobs:
     name: SAST Scan (Semgrep)
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false # <--- Deabilita a parada rápida para garantir que todas as variações sejam testadas
       matrix:
         service: [auth-service-main, evaluation-service-main, flag-service-main, targeting-service-main, analytics-service-main]
     steps:
