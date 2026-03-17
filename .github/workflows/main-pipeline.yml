@@ -24,24 +24,21 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-          # Adicionado cache tracking para evitar erros de dependência
           cache-tracking-file: auth-service-main/go.sum
       - name: Install Dependencies
+        working-directory: ./auth-service-main
         run: |
-          cd auth-service-main
-          go mod download
           go mod tidy
+          go mod download
       - name: Linter
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           working-directory: auth-service-main
-          # Adicionado --allow-parallel-runners para performance
           args: --timeout=5m --allow-parallel-runners
       - name: Unit Test
-        run: |
-          cd auth-service-main
-          go test -v ./...
+        working-directory: ./auth-service-main
+        run: go test -v ./...
 
   test-flag:
     name: Test Flag (Go)
@@ -54,10 +51,10 @@ jobs:
           go-version: '1.21'
           cache-tracking-file: flag-service-main/go.sum
       - name: Install Dependencies
+        working-directory: ./flag-service-main
         run: |
-          cd flag-service-main
-          go mod download
           go mod tidy
+          go mod download
       - name: Linter
         uses: golangci/golangci-lint-action@v6
         with:
@@ -65,9 +62,8 @@ jobs:
           working-directory: flag-service-main
           args: --timeout=5m --allow-parallel-runners
       - name: Unit Test
-        run: |
-          cd flag-service-main
-          go test -v ./...
+        working-directory: ./flag-service-main
+        run: go test -v ./...
 
   test-targeting:
     name: Test Targeting (Go)
@@ -80,10 +76,10 @@ jobs:
           go-version: '1.21'
           cache-tracking-file: targeting-service-main/go.sum
       - name: Install Dependencies
+        working-directory: ./targeting-service-main
         run: |
-          cd targeting-service-main
-          go mod download
           go mod tidy
+          go mod download
       - name: Linter
         uses: golangci/golangci-lint-action@v6
         with:
@@ -91,9 +87,8 @@ jobs:
           working-directory: targeting-service-main
           args: --timeout=5m --allow-parallel-runners
       - name: Unit Test
-        run: |
-          cd targeting-service-main
-          go test -v ./...
+        working-directory: ./targeting-service-main
+        run: go test -v ./...
 
   test-evaluation:
     name: Test Evaluation (Go)
@@ -106,10 +101,10 @@ jobs:
           go-version: '1.21'
           cache-tracking-file: evaluation-service-main/go.sum
       - name: Install Dependencies
+        working-directory: ./evaluation-service-main
         run: |
-          cd evaluation-service-main
-          go mod download
           go mod tidy
+          go mod download
       - name: Linter
         uses: golangci/golangci-lint-action@v6
         with:
@@ -117,9 +112,8 @@ jobs:
           working-directory: evaluation-service-main
           args: --timeout=5m --allow-parallel-runners
       - name: Unit Test
-        run: |
-          cd evaluation-service-main
-          go test -v ./...
+        working-directory: ./evaluation-service-main
+        run: go test -v ./...
 
   test-analytics:
     name: Test Analytics (Python)
@@ -131,11 +125,10 @@ jobs:
         with:
           python-version: '3.9'
       - name: Lint & Test
+        working-directory: ./analytics-service-main
         run: |
-          cd analytics-service-main
           python -m pip install --upgrade pip
           pip install flake8 pytest
-          # Linting básico para garantir integridade
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
           pytest || echo "No tests found"
 
