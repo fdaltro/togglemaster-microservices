@@ -20,10 +20,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-      - name: Dependencies
+          # Adicionado cache tracking para evitar erros de dependência
+          cache-tracking-file: auth-service-main/go.sum
+      - name: Install Dependencies
         run: |
           cd auth-service-main
           go mod download
@@ -33,7 +36,8 @@ jobs:
         with:
           version: latest
           working-directory: auth-service-main
-          args: --timeout=5m
+          # Adicionado --allow-parallel-runners para performance
+          args: --timeout=5m --allow-parallel-runners
       - name: Unit Test
         run: |
           cd auth-service-main
@@ -44,10 +48,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-      - name: Dependencies
+          cache-tracking-file: flag-service-main/go.sum
+      - name: Install Dependencies
         run: |
           cd flag-service-main
           go mod download
@@ -57,6 +63,7 @@ jobs:
         with:
           version: latest
           working-directory: flag-service-main
+          args: --timeout=5m --allow-parallel-runners
       - name: Unit Test
         run: |
           cd flag-service-main
@@ -67,10 +74,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-      - name: Dependencies
+          cache-tracking-file: targeting-service-main/go.sum
+      - name: Install Dependencies
         run: |
           cd targeting-service-main
           go mod download
@@ -80,6 +89,7 @@ jobs:
         with:
           version: latest
           working-directory: targeting-service-main
+          args: --timeout=5m --allow-parallel-runners
       - name: Unit Test
         run: |
           cd targeting-service-main
@@ -90,10 +100,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-      - name: Dependencies
+          cache-tracking-file: evaluation-service-main/go.sum
+      - name: Install Dependencies
         run: |
           cd evaluation-service-main
           go mod download
@@ -103,6 +115,7 @@ jobs:
         with:
           version: latest
           working-directory: evaluation-service-main
+          args: --timeout=5m --allow-parallel-runners
       - name: Unit Test
         run: |
           cd evaluation-service-main
@@ -113,13 +126,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
       - name: Lint & Test
         run: |
           cd analytics-service-main
+          python -m pip install --upgrade pip
           pip install flake8 pytest
+          # Linting básico para garantir integridade
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
           pytest || echo "No tests found"
 
@@ -129,10 +145,8 @@ jobs:
 
   deploy:
     name: Build & Deploy to EKS
-    # O deploy só inicia se os 5 testes acima passarem com sucesso
     needs: [test-auth, test-flag, test-targeting, test-evaluation, test-analytics]
     runs-on: ubuntu-latest
-    # Garante que o deploy só ocorra em pushes na branch main
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
     steps:
@@ -156,21 +170,16 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          # 1. Gera a tag baseada no commit hash curto para rastreabilidade
           VERSION="v1.0.0-$(echo ${{ github.sha }} | cut -c1-7)"
           SERVICES=("auth" "flag" "targeting" "evaluation" "analytics")
           
           for SERVICE in "${SERVICES[@]}"; do
             REPO_NAME="togglemaster-$SERVICE"
             echo "Building image for $SERVICE..."
-            # 2. Realiza o build apontando para as pastas específicas de cada serviço
             docker build -t $ECR_REGISTRY/$REPO_NAME:$VERSION ./$SERVICE-service-main
             docker push $ECR_REGISTRY/$REPO_NAME:$VERSION
           done
-          # 3. Exporta a versão para ser usada nos próximos passos
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-
-      # --- CONEXÃO E ATUALIZAÇÃO DO REPOSITÓRIO GITOPS ---
 
       - name: Checkout GitOps Repo
         uses: actions/checkout@v4
@@ -190,7 +199,6 @@ jobs:
           for SERVICE in "${SERVICES[@]}"; do
             echo "Atualizando âncora fixa 'togglemaster-$SERVICE' para a versão $VERSION"
             cd $SERVICE
-            # 4. O comando 'kustomize edit' localiza a âncora e substitui pelo endereço ECR completo
             kustomize edit set image togglemaster-$SERVICE=$ECR_REGISTRY/togglemaster-$SERVICE:$VERSION
             cd ..
           done
@@ -201,6 +209,5 @@ jobs:
           git config --global user.email "fabriciodaltro@gmail.com"
           git config --global user.name "fdaltro"
           git add .
-          # 5. Commit informativo para facilitar o rastreio do deploy
           git commit -m "chore: deploy version ${{ env.VERSION }} [skip ci]" || echo "Sem mudanças"
           git push origin main
