@@ -78,7 +78,7 @@ jobs:
 
   # ==========================================
   # ESTÁGIO 3: SAST (SEGURANÇA DO CÓDIGO FONTE)
-  # ==========================================
+  # ============================================
   sast-scan:
     name: SAST Scan (Semgrep)
     runs-on: ubuntu-latest
