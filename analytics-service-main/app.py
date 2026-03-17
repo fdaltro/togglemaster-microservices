@@ -93,7 +93,7 @@ def sqs_worker_loop():
             # Long-polling: espera até 20s por mensagens
             response = sqs_client.receive_message(
                 QueueUrl=SQS_QUEUE_URL,
-                MaxNumberOfMessages=10,  # Processa em lotes de até 10
+                MaxNumberOfMessages=10,  # Processa em lotes de até 10 mensagens
                 WaitTimeSeconds=20
             )
             
