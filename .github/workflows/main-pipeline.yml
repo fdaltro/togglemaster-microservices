@@ -114,8 +114,32 @@ jobs:
           pip install pytest
           pytest || echo "Sem testes para este serviço"
 
+# ==========================================
+  # ESTÁGIO 4: SAST (SEGURANÇA DO CÓDIGO)
   # ==========================================
-  # ESTÁGIO 4: BUILD & DEPLOY (GITOPS)
+  sast-scan:
+    name: SAST Scan (Semgrep)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [auth-service-main, evaluation-service-main, flag-service-main, targeting-service-main, analytics-service-main]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Semgrep SAST
+        uses: semgrep/semgrep-action@v1
+        with:
+          # Rodar o scan apenas na pasta do serviço atual da matrix
+          config: >-
+            p/default
+            p/security-audit
+            p/secrets
+          path: ./${{ matrix.service }}
+          # '0' para não travar o deploy durante a fase de construção (pode mudar para '1' depois)
+          auditOn: true
+
+
+  # ==========================================
+  # ESTÁGIO 5: BUILD & DEPLOY (GITOPS)
   # ==========================================
   deploy:
     name: Build & Deploy to EKS
