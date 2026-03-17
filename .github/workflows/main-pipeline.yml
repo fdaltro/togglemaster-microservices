@@ -144,7 +144,7 @@ jobs:
   deploy:
     name: Build & Deploy to EKS
     # O Deploy espera TUDO: todos os lints, todos os SCAs e todos os testes
-    needs: [lint-go, lint-python, sca-scan, test-go, test-python]
+    needs: [lint-go, lint-python, sca-scan, test-go, test-python, sast-scan]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
