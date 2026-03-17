@@ -12,10 +12,10 @@ permissions:
 
 jobs:
   # ==========================================
-  # ESTÁGIO 1: LINTING (ESTILO E PADRÃO)
+  # ESTÁGIO 1: LINTING (QUALIDADE DE CÓDIGO)
   # ==========================================
   lint-go:
-    name: Lint Go (Auth & Evaluation)
+    name: Lint Go
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-      - name: Install Dependencies
+      - name: Dependencies
         working-directory: ./${{ matrix.service }}
         run: |
           if [ ! -f go.mod ]; then go mod init ${{ matrix.service }}; fi
@@ -38,7 +38,7 @@ jobs:
           args: --timeout=5m --allow-parallel-runners --disable errcheck,staticcheck
 
   lint-python:
-    name: Lint Python (Flag, Targeting, Analytics)
+    name: Lint Python
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -48,7 +48,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.9'
-      - name: Lint
+      - name: Linting
         working-directory: ./${{ matrix.service }}
         run: |
           python -m pip install --upgrade pip
@@ -72,11 +72,33 @@ jobs:
           scan-type: 'fs'
           scan-ref: './${{ matrix.service }}'
           format: 'table'
-          exit-code: '0'
-          severity: 'CRITICAL'
+          # '0' permite que o deploy continue mesmo com vulnerabilidades para fins de demo
+          exit-code: '0' 
+          severity: 'CRITICAL,HIGH'
 
   # ==========================================
-  # ESTÁGIO 3: UNIT TESTS (LÓGICA)
+  # ESTÁGIO 3: SAST (SEGURANÇA DO CÓDIGO FONTE)
+  # ==========================================
+  sast-scan:
+    name: SAST Scan (Semgrep)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [auth-service-main, evaluation-service-main, flag-service-main, targeting-service-main, analytics-service-main]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Semgrep SAST
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/default
+            p/security-audit
+            p/secrets
+          path: ./${{ matrix.service }}
+          auditOn: true
+
+  # ==========================================
+  # ESTÁGIO 4: UNIT TESTS (LÓGICA)
   # ==========================================
   test-go:
     name: Unit Test Go
@@ -104,7 +126,8 @@ jobs:
         service: [flag-service-main, targeting-service-main, analytics-service-main]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
       - name: Run Tests
@@ -112,39 +135,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pytest
-          pytest || echo "Sem testes para este serviço"
-
-# ==========================================
-  # ESTÁGIO 4: SAST (SEGURANÇA DO CÓDIGO)
-  # ==========================================
-  sast-scan:
-    name: SAST Scan (Semgrep)
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        service: [auth-service-main, evaluation-service-main, flag-service-main, targeting-service-main, analytics-service-main]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run Semgrep SAST
-        uses: semgrep/semgrep-action@v1
-        with:
-          # Rodar o scan apenas na pasta do serviço atual da matrix
-          config: >-
-            p/default
-            p/security-audit
-            p/secrets
-          path: ./${{ matrix.service }}
-          # '0' para não travar o deploy durante a fase de construção (pode mudar para '1' depois)
-          auditOn: true
-
+          pytest || echo "Sem testes definidos"
 
   # ==========================================
-  # ESTÁGIO 5: BUILD & DEPLOY (GITOPS)
+  # ESTÁGIO 5: BUILD, PUSH & GITOPS DEPLOY
   # ==========================================
   deploy:
     name: Build & Deploy to EKS
-    # O Deploy espera TUDO: todos os lints, todos os SCAs e todos os testes
-    needs: [lint-go, lint-python, sca-scan, test-go, test-python, sast-scan]
+    # O Deploy espera o sucesso de TODOS os jobs de teste e segurança
+    needs: [lint-go, lint-python, sca-scan, sast-scan, test-go, test-python]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
