@@ -12,13 +12,13 @@ permissions:
 
 jobs:
   # ==========================================
-  # ESTÁGIO 1: LINT & TESTS (PARALELOS)
+  # ESTÁGIO 1: LINT, TESTS & SCA (PARALELOS)
   # ==========================================
 
   # --- SERVIÇOS EM GO ---
 
   test-auth:
-    name: Test Auth (Go)
+    name: Test & Scan Auth (Go)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,19 +31,29 @@ jobs:
         run: |
           if [ ! -f go.mod ]; then go mod init auth; fi
           go mod tidy
-          go mod download
       - name: Linter
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           working-directory: auth-service-main
           args: --timeout=5m --allow-parallel-runners --disable errcheck,staticcheck
+      
+      # PASSO SCA: Trivy Scan
+      - name: Run Trivy SCA
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './auth-service-main'
+          format: 'table'
+          exit-code: '1' # Trava o pipeline se encontrar vulnerabilidades
+          severity: 'CRITICAL,HIGH'
+
       - name: Unit Test
         working-directory: ./auth-service-main
         run: go test -v ./...
 
   test-evaluation:
-    name: Test Evaluation (Go)
+    name: Test & Scan Evaluation (Go)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,13 +66,22 @@ jobs:
         run: |
           if [ ! -f go.mod ]; then go mod init evaluation; fi
           go mod tidy
-          go mod download
       - name: Linter
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           working-directory: evaluation-service-main
           args: --timeout=5m --allow-parallel-runners --disable errcheck,staticcheck
+      
+      - name: Run Trivy SCA
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './evaluation-service-main'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
       - name: Unit Test
         working-directory: ./evaluation-service-main
         run: go test -v ./...
@@ -70,7 +89,7 @@ jobs:
   # --- SERVIÇOS EM PYTHON ---
 
   test-targeting:
-    name: Test Targeting (Python)
+    name: Test & Scan Targeting (Python)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,10 +103,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install flake8 pytest
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          pytest || echo "Sem testes para este serviço"
+      
+      - name: Run Trivy SCA
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './targeting-service-main'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Unit Test
+        working-directory: ./targeting-service-main
+        run: pytest || echo "Sem testes"
 
   test-flag:
-    name: Test Flag (Python)
+    name: Test & Scan Flag (Python)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -101,10 +132,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install flake8 pytest
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          pytest || echo "Sem testes para este serviço"
+      
+      - name: Run Trivy SCA
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './flag-service-main'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Unit Test
+        working-directory: ./flag-service-main
+        run: pytest || echo "Sem testes"
 
   test-analytics:
-    name: Test Analytics (Python)
+    name: Test & Scan Analytics (Python)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -118,7 +161,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install flake8 pytest
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          pytest || echo "Sem testes para este serviço"
+      
+      - name: Run Trivy SCA
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './analytics-service-main'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Unit Test
+        working-directory: ./analytics-service-main
+        run: pytest || echo "Sem testes"
 
   # ==========================================
   # ESTÁGIO 2: BUILD, PUSH & GITOPS
