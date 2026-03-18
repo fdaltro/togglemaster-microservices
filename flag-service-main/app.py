@@ -1,6 +1,7 @@
 import os
 import sys
 import psycopg2
+from psycopg2 import sql # Importação necessária para queries dinâmicas seguras
 import requests
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
@@ -27,7 +28,6 @@ if not DATABASE_URL or not AUTH_SERVICE_URL:
     sys.exit(1)
 
 # --- Pool de Conexão com o Banco ---
-# Inicializa o pool de conexões (Mín: 1, Máx: 5 conexões)
 try:
     pool = SimpleConnectionPool(1, 5, dsn=DATABASE_URL)
     log.info("Pool de conexões com o PostgreSQL inicializado.")
@@ -45,7 +45,6 @@ def require_auth(f):
             return jsonify({"error": "Authorization header obrigatório"}), 401
         
         try:
-            # Chama o /validate do auth-service
             validate_url = f"{AUTH_SERVICE_URL}/validate"
             response = requests.get(validate_url, headers={"Authorization": auth_header}, timeout=3)
             
@@ -55,12 +54,11 @@ def require_auth(f):
         
         except requests.exceptions.Timeout:
             log.error("Timeout ao conectar com o auth-service")
-            return jsonify({"error": "Serviço de autenticação indisponível (timeout)"}), 504 # Gateway Timeout
+            return jsonify({"error": "Serviço de autenticação indisponível (timeout)"}), 504
         except requests.exceptions.RequestException as e:
             log.error(f"Erro ao conectar com o auth-service: {e}")
-            return jsonify({"error": "Serviço de autenticação indisponível"}), 503 # Service Unavailable
+            return jsonify({"error": "Serviço de autenticação indisponível"}), 503
 
-        # Se a chave for válida, continua para a rota
         return f(*args, **kwargs)
     return decorated
 
@@ -87,6 +85,7 @@ def create_flag():
     try:
         conn = pool.getconn()
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        # Query parametrizada: Protegida contra SQL Injection
         cur.execute(
             "INSERT INTO flags (name, description, is_enabled, created_at, updated_at) "
             "VALUES (%s, %s, %s, NOW(), NOW()) RETURNING *",
@@ -111,7 +110,6 @@ def create_flag():
 @app.route('/flags', methods=['GET'])
 @require_auth
 def get_flags():
-    """ Lista todas as feature flags """
     conn = None
     cur = None
     try:
@@ -130,7 +128,6 @@ def get_flags():
 @app.route('/flags/<string:name>', methods=['GET'])
 @require_auth
 def get_flag(name):
-    """ Busca uma feature flag específica pelo nome """
     conn = None
     cur = None
     try:
@@ -151,35 +148,38 @@ def get_flag(name):
 @app.route('/flags/<string:name>', methods=['PUT'])
 @require_auth
 def update_flag(name):
-    """ Atualiza uma feature flag (descrição ou status 'is_enabled') """
+    """ Atualiza uma feature flag usando psycopg2.sql para segurança total """
     data = request.get_json()
     if not data:
         return jsonify({"error": "Corpo da requisição obrigatório"}), 400
 
-    fields = []
+    query_parts = []
     values = []
     
-    # Constrói a query dinamicamente
     if 'description' in data:
-        fields.append("description = %s")
+        query_parts.append(sql.SQL("description = {}").format(sql.Placeholder()))
         values.append(data['description'])
     if 'is_enabled' in data:
-        fields.append("is_enabled = %s")
+        query_parts.append(sql.SQL("is_enabled = {}").format(sql.Placeholder()))
         values.append(data['is_enabled'])
     
-    if not fields:
+    if not query_parts:
         return jsonify({"error": "Pelo menos um campo ('description', 'is_enabled') é obrigatório"}), 400
     
-    values.append(name) # Adiciona o 'name' para a cláusula WHERE
+    values.append(name) 
     
-    query = f"UPDATE flags SET {', '.join(fields)} WHERE name = %s RETURNING *"
+    # Construção de query dinâmica usando objetos SQL (impede SQL Injection de strings formatadas)
+    query = sql.SQL("UPDATE flags SET {fields} WHERE name = {name_val} RETURNING *").format(
+        fields=sql.SQL(', ').join(query_parts),
+        name_val=sql.Placeholder()
+    )
     
     conn = None
     cur = None
     try:
         conn = pool.getconn()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(query, tuple(values))
+        cur.execute(query, values)
         
         if cur.rowcount == 0:
             return jsonify({"error": "Flag não encontrada"}), 404
@@ -199,7 +199,6 @@ def update_flag(name):
 @app.route('/flags/<string:name>', methods=['DELETE'])
 @require_auth
 def delete_flag(name):
-    """ Deleta uma feature flag """
     conn = None
     cur = None
     try:
@@ -212,7 +211,7 @@ def delete_flag(name):
             
         conn.commit()
         log.info(f"Flag '{name}' deletada com sucesso.")
-        return "", 204 # 204 No Content
+        return "", 204
     except Exception as e:
         if conn: conn.rollback()
         log.error(f"Erro ao deletar flag '{name}': {e}")
@@ -223,4 +222,6 @@ def delete_flag(name):
 
 if __name__ == '__main__':
     port = int(os.getenv("PORT", 8002))
+    # nosemgrep: python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host
+    # Justificativa: Necessário 0.0.0.0 para roteamento dentro do cluster Kubernetes (Service/Ingress)
     app.run(host='0.0.0.0', port=port, debug=False)
