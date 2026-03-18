@@ -223,5 +223,4 @@ def delete_flag(name):
 if __name__ == '__main__':
     port = int(os.getenv("PORT", 8002))
     # nosemgrep: python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host
-    # Justificativa: Necessário 0.0.0.0 para roteamento dentro do cluster Kubernetes (Service/Ingress)
     app.run(host='0.0.0.0', port=port, debug=False)

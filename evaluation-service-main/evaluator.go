@@ -2,7 +2,7 @@ package main
 
 import (
 	"os"
-	"crypto/sha1" // Usado para hash determinístico
+	"crypto/sha256" // Usado para hash determinístico
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -307,7 +307,7 @@ func (a *App) runEvaluationLogic(info *CombinedFlagInfo, userID string) bool {
 // que é sempre o mesmo para a mesma string de entrada.
 func getDeterministicBucket(input string) int {
 	// Usamos SHA1 (rápido) e pegamos os primeiros 4 bytes
-	hasher := sha1.New()
+	hasher := sha256.New()
 	hasher.Write([]byte(input))
 	hash := hasher.Sum(nil)
 	
