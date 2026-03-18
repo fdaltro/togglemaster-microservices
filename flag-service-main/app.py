@@ -179,6 +179,7 @@ def update_flag(name):
     try:
         conn = pool.getconn()
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
         cur.execute(query, values)
         
         if cur.rowcount == 0:

@@ -76,28 +76,38 @@ jobs:
           exit-code: '1' 
           severity: 'CRITICAL'
 
-  # ==========================================
+# ==========================================
   # ESTÁGIO 3: SAST (SEGURANÇA DO CÓDIGO FONTE)
-  # ============================================
+  # ==========================================
   sast-scan:
     name: SAST Scan (Semgrep)
     runs-on: ubuntu-latest
-    continue-on-error: true # <--- Permite que o pipeline continue mesmo se o SAST encontrar vulnerabilidades, para fins de demo
+    # Mantemos o paralelismo para os 5 serviços
     strategy:
-      fail-fast: false # <--- Deabilita a parada rápida para garantir que todas as variações sejam testadas
+      fail-fast: false
       matrix:
         service: [auth-service-main, evaluation-service-main, flag-service-main, targeting-service-main, analytics-service-main]
+    
     steps:
-      - uses: actions/checkout@v4
-      - name: Run Semgrep SAST
-        uses: semgrep/semgrep-action@v1
+      - name: Checkout Código
+        uses: actions/checkout@v4
+
+      - name: Instalar Python para o Semgrep
+        uses: actions/setup-python@v5
         with:
-          config: >-
-            p/default
-            p/security-audit
-            p/secrets
-          path: ./${{ matrix.service }}
-          auditOn: true
+          python-version: '3.11'
+
+      - name: Executar Semgrep CI
+        run: |
+          python3 -m pip install semgrep
+          # Executa o scan com as regras de segurança e segredos.
+          # O comando '|| true' ao final garante que o pipeline avance mesmo se encontrar riscos, 
+          # permitindo que você mostre os achados nos logs sem bloquear a demonstração.
+          semgrep ci \
+            --config p/default \
+            --config p/security-audit \
+            --config p/secrets \
+            --path ./${{ matrix.service }} || true
 
   # ==========================================
   # ESTÁGIO 4: UNIT TESTS (LÓGICA)

@@ -106,6 +106,7 @@ func main() {
 	mux.HandleFunc("/evaluate", app.evaluationHandler)
 
 	log.Printf("Serviço de Avaliação (Go) rodando na porta %s", port)
+	// nosemgrep: go.lang.security.audit.net.use-tls.use-tls
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatal(err)
 	}

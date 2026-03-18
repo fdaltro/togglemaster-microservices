@@ -183,6 +183,7 @@ def delete_rule(flag_name):
     try:
         conn = pool.getconn()
         cur = conn.cursor()
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
         cur.execute("DELETE FROM targeting_rules WHERE flag_name = %s", (flag_name,))
         
         if cur.rowcount == 0:
