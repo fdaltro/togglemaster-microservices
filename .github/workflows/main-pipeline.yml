@@ -100,14 +100,12 @@ jobs:
       - name: Executar Semgrep CI
         run: |
           python3 -m pip install semgrep
-          # Entramos na pasta do serviço para que o Semgrep foque apenas nela
-          cd ./${{ matrix.service }}
-          # Agora rodamos o CI sem passar o path como argumento, 
-          # e sem o '|| true' para garantir o bloqueio.
+          # Usamos a flag --subdir para focar na pasta do microserviço atual da matrix
           semgrep ci \
             --config p/default \
             --config p/security-audit \
-            --config p/secrets
+            --config p/secrets \
+            --subdir ./${{ matrix.service }}
 
 
   # ==========================================
