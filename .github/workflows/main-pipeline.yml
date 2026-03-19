@@ -107,7 +107,7 @@ jobs:
             --config p/default \
             --config p/security-audit \
             --config p/secrets \
-            --path ./${{ matrix.service }} || true
+            --path ./${{ matrix.service }} # || true comando que garante que o pipeline continue mesmo com falhas de segurança para fins de demo
 
   # ==========================================
   # ESTÁGIO 4: UNIT TESTS (LÓGICA)
