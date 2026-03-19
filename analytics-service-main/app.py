@@ -131,7 +131,7 @@ def start_worker():
     worker_thread.start()
 
 # Inicia o worker SQS em uma thread de background
-# Isso garante que ele inicie tanto com 'flask run' quanto com 'gunicorn'
+# Isso garante que ele inicie tanto com 'flask run' quanto com 'gunicorn' teste
 start_worker()
 
 if __name__ == '__main__':
