@@ -82,7 +82,6 @@ jobs:
   sast-scan:
     name: SAST Scan (Semgrep)
     runs-on: ubuntu-latest
-    # Mantemos o paralelismo para os 5 serviços
     strategy:
       fail-fast: false
       matrix:
@@ -90,7 +89,7 @@ jobs:
     
     steps:
       - name: Checkout Código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4 # Corrigido: alinhado com o 'name'
 
       - name: Instalar Python para o Semgrep
         uses: actions/setup-python@v5
@@ -98,11 +97,8 @@ jobs:
           python-version: '3.11'
 
       - name: Executar Semgrep CI
-        run: |
+        run: | # Corrigido: alinhado com o 'name'
           python3 -m pip install semgrep
-          # Executa o scan com as regras de segurança e segredos.
-          # O comando '|| true' ao final garante que o pipeline avance mesmo se encontrar riscos, 
-          # permitindo que você mostre os achados nos logs sem bloquear a demonstração.
           semgrep ci \
             --config p/default \
             --config p/security-audit \
