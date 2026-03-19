@@ -1,13 +1,30 @@
+# Estágio 1: Builder
 FROM python:3.9-slim AS builder
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+# Instalamos as dependências em um prefixo limpo
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
+# Estágio 2: Final (Runtime)
 FROM python:3.9-slim
+
+# 1. Criamos um usuário de sistema sem privilégios e seu grupo
+RUN addgroup --system appgroup && adduser --system --group appuser
+
 WORKDIR /app
-COPY --from=builder /root/.local /root/.local
-COPY . .
-ENV PATH=/root/.local/bin:$PATH
-# Porta de health check definida no app.py/README
+
+# 2. Copiamos as dependências do builder para o local padrão do sistema
+# Isso evita problemas de PATH e permissão na pasta /root/
+COPY --from=builder /install /usr/local
+
+# 3. Copiamos o código da aplicação já definindo o dono (ownership) para o appuser
+COPY --chown=appuser:appgroup . .
+
+# 4. A correção mágica: Mudamos para o usuário não-root
+USER appuser
+
+# Porta de health check
 EXPOSE 8005
+
+# O Gunicorn agora rodará sob o contexto do appuser
 CMD ["gunicorn", "--bind", "0.0.0.0:8005", "app:app"]

@@ -1,15 +1,33 @@
-# Stage 1: Build
+# Estágio 1: Builder (Compilação)
 FROM golang:1.21-alpine AS builder
 WORKDIR /app
+
+# 1. Preparação das dependências
 COPY go.mod go.su[m] ./
 RUN go mod download
+
+# 2. Cópia do código e compilação do binário estático
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o evaluation-service .
 
-# Stage 2: Final
+# Estágio 2: Final (Runtime Seguro)
 FROM alpine:3.18
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
+
+# 3. Instala certificados e cria o usuário 'appuser' (sem senha e sem root)
+RUN apk --no-cache add ca-certificates && adduser -D appuser
+
+# 4. Define uma pasta de trabalho acessível (saímos de /root para /app)
+WORKDIR /app
+
+# 5. Copia o binário e transfere a posse para o appuser
 COPY --from=builder /app/evaluation-service .
+RUN chown appuser:appuser evaluation-service
+
+# 6. A instrução que o Semgrep exige: Define o usuário de execução
+USER appuser
+
+# Porta de serviço do Evaluation
 EXPOSE 8004
+
+# Execução do binário
 CMD ["./evaluation-service"]

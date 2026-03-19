@@ -1,18 +1,40 @@
-# Stage 1: Install dependencies
+# Estágio 1: Builder (Instala compiladores)
 FROM python:3.9-slim AS builder
 WORKDIR /app
-RUN apt-get update && apt-get install -y gcc libpq-dev
-COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
 
-# Stage 2: Final
+# Instala dependências de build necessárias para o psycopg2
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+# Instalamos as dependências em um prefixo limpo para evitar a pasta /root
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# Estágio 2: Final (Runtime Seguro)
 FROM python:3.9-slim
 WORKDIR /app
-# Instala apenas a biblioteca runtime do Postgres necessária
-RUN apt-get update && apt-get install -y libpq5 && rm -rf /var/lib/apt/lists/*
-# Copia as libs instaladas no estágio anterior - teste
-COPY --from=builder /root/.local /root/.local
-COPY . .
-ENV PATH=/root/.local/bin:$PATH
+
+# 1. Instala apenas o necessário para o Postgres rodar (sem GCC)
+RUN apt-get update && apt-get install -y \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Criamos o usuário e grupo de sistema (Non-root)
+RUN addgroup --system appgroup && adduser --system --group appuser
+
+# 3. Copiamos as dependências do builder para o local global
+COPY --from=builder /install /usr/local
+
+# 4. Copiamos o código já com as permissões do usuário novo
+COPY --chown=appuser:appgroup . .
+
+# 5. A correção do Semgrep: Mudamos para o usuário não-privilegiado
+USER appuser
+
+# Porta definida no seu app.py
 EXPOSE 8002
+
+# Execução via Gunicorn (contexto appuser)
 CMD ["gunicorn", "--bind", "0.0.0.0:8002", "app:app"]

@@ -1,14 +1,42 @@
+# Estágio 1: Build (Compilação)
 FROM python:3.9-slim AS builder
 WORKDIR /app
-RUN apt-get update && apt-get install -y gcc libpq-dev
-COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
 
+# Instala ferramentas necessárias para compilar drivers (como psycopg2)
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+# Instalamos as dependências em um prefixo customizado (/install) 
+# para que fiquem acessíveis ao usuário comum depois
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# Estágio 2: Final (Runtime)
 FROM python:3.9-slim
 WORKDIR /app
-RUN apt-get update && apt-get install -y libpq5 && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /root/.local /root/.local
-COPY . .
-ENV PATH=/root/.local/bin:$PATH
+
+# 1. Instala apenas a biblioteca de execução do Postgres
+RUN apt-get update && apt-get install -y \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Criação do usuário não-root (Segurança)
+RUN addgroup --system appgroup && adduser --system --group appuser
+
+# 3. Copia as bibliotecas instaladas no builder para o diretório global do sistema
+COPY --from=builder /install /usr/local
+
+# 4. Copia o código da aplicação já definindo o novo usuário como dono
+COPY --chown=appuser:appgroup . .
+
+# 5. O Bloqueador do Semgrep: Define o usuário para execução
+USER appuser
+
+# Porta de serviço
 EXPOSE 8003
+
+# Execução via Gunicorn
 CMD ["gunicorn", "--bind", "0.0.0.0:8003", "app:app"]
