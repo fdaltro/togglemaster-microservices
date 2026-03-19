@@ -96,18 +96,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
+          
       - name: Executar Semgrep CI
         run: |
           python3 -m pip install semgrep
-          # Executa o scan com as regras de segurança e segredos.
-          # O comando '|| true' ao final garante que o pipeline avance mesmo se encontrar riscos, 
-          # permitindo que você mostre os achados nos logs sem bloquear a demonstração.
+          # Removido o --path e o || true
           semgrep ci \
             --config p/default \
             --config p/security-audit \
             --config p/secrets \
-            --path ./${{ matrix.service }} || true
+            ./${{ matrix.service }}
+
 
   # ==========================================
   # ESTÁGIO 4: UNIT TESTS (LÓGICA)
