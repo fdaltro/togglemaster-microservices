@@ -148,7 +148,7 @@ jobs:
           pip install pytest
           pytest || echo "Sem testes definidos"
 
-  # ==========================================
+  # ==========================================*
   # ESTÁGIO 5: BUILD, PUSH & GITOPS DEPLOY
   # ==========================================
   deploy:
