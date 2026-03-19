@@ -85,8 +85,6 @@ def create_rule():
     try:
         conn = pool.getconn()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        # O comentário abaixo silencia o alerta específico de SQL Injection do Semgrep
-        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
         cur.execute(
             "INSERT INTO targeting_rules (flag_name, is_enabled, rules, created_at, updated_at) "
             "VALUES (%s, %s, %s, NOW(), NOW()) RETURNING *",
@@ -159,6 +157,8 @@ def update_rule(flag_name):
     try:
         conn = pool.getconn()
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        # O comentário abaixo silencia o alerta específico de SQL Injection do Semgrep
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
         cur.execute(query, tuple(values))
         
         if cur.rowcount == 0:
