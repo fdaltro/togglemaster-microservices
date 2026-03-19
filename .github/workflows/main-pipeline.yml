@@ -76,7 +76,7 @@ jobs:
           exit-code: '1' 
           severity: 'CRITICAL'
 
-# ==========================================
+  # ==========================================
   # ESTÁGIO 3: SAST (SEGURANÇA DO CÓDIGO FONTE)
   # ==========================================
   sast-scan:
@@ -89,7 +89,7 @@ jobs:
     
     steps:
       - name: Checkout Código
-        uses: actions/checkout@v4 # Corrigido: alinhado com o 'name'
+        uses: actions/checkout@v4
 
       - name: Instalar Python para o Semgrep
         uses: actions/setup-python@v5
@@ -97,13 +97,14 @@ jobs:
           python-version: '3.11'
 
       - name: Executar Semgrep CI
-        run: | # Corrigido: alinhado com o 'name'
+        run: |
           python3 -m pip install semgrep
+          # Removido '--path' e colocado o diretório diretamente no final
           semgrep ci \
             --config p/default \
             --config p/security-audit \
             --config p/secrets \
-            --path ./${{ matrix.service }}
+            ./${{ matrix.service }}
 
   # ==========================================
   # ESTÁGIO 4: UNIT TESTS (LÓGICA)
