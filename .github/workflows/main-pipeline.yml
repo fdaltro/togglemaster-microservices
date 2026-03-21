@@ -149,11 +149,10 @@ jobs:
           pytest || echo "Sem testes definidos"
 
   # ==========================================
-  # ESTÁGIO 5: BUILD, PUSH & GITOPS DEPLOY
+  # ESTÁGIO 5: BUILD, CONTAINER SCAN & GITOPS
   # ==========================================
   deploy:
     name: Build & Deploy to EKS
-    # O Deploy espera o sucesso de TODOS os jobs de teste e segurança
     needs: [lint-go, lint-python, sca-scan, sast-scan, test-go, test-python]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -170,11 +169,21 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
 
+      # 1. Instalação do Trivy no Runner do GitHub
+      - name: Install Trivy
+        run: |
+          sudo apt-get install wget apt-transport-https gnupg lsb-release -y
+          wget -qO - https://aquasecurity.github.io/trivy-repo/dabest.gpg | sudo apt-key add -
+          echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy -y
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and Push Images
+      # 2. Loop de Build, Scan e Push
+      - name: Build, Scan and Push Images
         id: build-images
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -184,12 +193,26 @@ jobs:
           
           for SERVICE in "${SERVICES[@]}"; do
             REPO_NAME="togglemaster-$SERVICE"
-            echo "Building image for $SERVICE..."
-            docker build -t $ECR_REGISTRY/$REPO_NAME:$VERSION ./$SERVICE-service-main
-            docker push $ECR_REGISTRY/$REPO_NAME:$VERSION
+            IMAGE_TAG="$ECR_REGISTRY/$REPO_NAME:$VERSION"
+            
+            echo "::group::Processando $SERVICE"
+            
+            # BUILD
+            docker build -t $IMAGE_TAG ./$SERVICE-service-main
+            
+            # CONTAINER SCAN (Trivy)
+            # --exit-code 0 permite que o push ocorra mesmo com vulnerabilidades (ideal para a demo)
+            # --severity CRITICAL foca no que realmente importa
+            trivy image --severity CRITICAL --exit-code 0 $IMAGE_TAG
+            
+            # PUSH
+            docker push $IMAGE_TAG
+            
+            echo "::endgroup::"
           done
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
+      # 3. Atualização do repositório GitOps
       - name: Checkout GitOps Repo
         uses: actions/checkout@v4
         with:
@@ -202,17 +225,14 @@ jobs:
           VERSION=${{ env.VERSION }}
           ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
           SERVICES=("auth" "flag" "targeting" "evaluation" "analytics")
-          
           cd gitops-repo/apps
-          
           for SERVICE in "${SERVICES[@]}"; do
-            echo "Updating anchor 'togglemaster-$SERVICE' to version $VERSION"
             cd $SERVICE
             kustomize edit set image togglemaster-$SERVICE=$ECR_REGISTRY/togglemaster-$SERVICE:$VERSION
             cd ..
           done
 
-      - name: Commit and Push to GitOps Repo
+      - name: Commit and Push to GitOps
         run: |
           cd gitops-repo
           git config --global user.email "fabriciodaltro@gmail.com"
