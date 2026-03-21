@@ -17,8 +17,8 @@ require (
 	github.com/jackc/pgtype v1.14.0 // indirect
 	// --- TESTE DO TRIVY ---
 	// Descomente a linha abaixo e comente a v0.31.0 para forçar a vulnerabilidade
-	golang.org/x/crypto v0.20.0 // indirect
+	// golang.org/x/crypto v0.20.0 // indirect
 	// Versão Segura (Produção)
-	// golang.org/x/crypto v0.31.0 // indirect
+	golang.org/x/crypto v0.31.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
 )
