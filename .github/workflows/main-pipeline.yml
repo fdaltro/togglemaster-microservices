@@ -172,19 +172,12 @@ jobs:
       # 1. Instalação do Trivy no Runner do GitHub
       - name: Install Trivy
         run: |
-          # 1. Instala dependências básicas
-          sudo apt-get update
-          sudo apt-get install -y wget gnupg lsb-release
+          # Baixa e instala o binário do Trivy diretamente no /usr/local/bin
+          # Este método ignora erros de GPG do Ubuntu Noble
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
           
-          # 2. Baixa e instala a chave GPG de forma segura (Método Moderno)
-          wget -qO - https://aquasecurity.github.io/trivy-repo/dabest.gpg | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
-          
-          # 3. Adiciona o repositório apontando para a chave específica
-          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
-          
-          # 4. Atualiza e instala o Trivy
-          sudo apt-get update
-          sudo apt-get install -y trivy
+          # Verifica se a instalação foi bem-sucedida
+          trivy --version
 
       - name: Login to Amazon ECR
         id: login-ecr
