@@ -2,7 +2,7 @@
 FROM golang:1.21-alpine AS builder
 WORKDIR /app
 
-# 1. Cache de dependências eficiente
+# 1. Cache de dependências eficiente.
 COPY go.mod go.su[m] ./
 RUN go mod download
 
