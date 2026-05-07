@@ -83,8 +83,8 @@ func main() {
 	handler := otelhttp.NewHandler(mux, "auth-service-http")
 
 	log.Printf("Serviço de Autenticação (Go) rodando na porta %s", port)
-	// nosemgrep: go.lang.security.audit.net.use-tls.use-tls
 	// Subimos o servidor usando o handler envelopado em vez do mux puro
+	// nosemgrep: go.lang.security.audit.net.use-tls.use-tls
 	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatal(err)
 	}
