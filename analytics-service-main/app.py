@@ -114,7 +114,7 @@ def sqs_worker_loop():
             log.error(f"Erro inesperado no loop principal do SQS: {e}")
             time.sleep(10)
 
-# --- Servidor Flask (Apenas para Health Check) ---
+# --- Servidor Flask (Apenas para Health Check) ----
 
 app = Flask(__name__)
 

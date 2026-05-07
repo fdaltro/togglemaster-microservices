@@ -1,4 +1,4 @@
-# Estágio 1: Builder (Instala compiladores)
+# Estágio 1: Builder (Instala compiladores)-
 FROM python:3.9-slim AS builder
 WORKDIR /app
 
