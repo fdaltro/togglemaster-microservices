@@ -38,5 +38,5 @@ USER appuser
 # Porta de serviço
 EXPOSE 8003
 
-# Execução via Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8003", "app:app"]
+# Execução via Gunicorn com o Agente OTel
+CMD ["opentelemetry-instrument", "gunicorn", "--bind", "0.0.0.0:8003", "app:app"]

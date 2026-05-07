@@ -26,5 +26,5 @@ USER appuser
 # Porta de health check
 EXPOSE 8005
 
-# O Gunicorn agora rodará sob o contexto do appuser
-CMD ["gunicorn", "--bind", "0.0.0.0:8005", "app:app"]
+# 5. O Gunicorn agora rodará envelopado pelo agente do OpenTelemetry
+CMD ["opentelemetry-instrument", "gunicorn", "--bind", "0.0.0.0:8005", "app:app"]

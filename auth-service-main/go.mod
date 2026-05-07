@@ -1,11 +1,13 @@
 module auth-service
 
-go 1.21
+go 1.25.0
 
 require (
 	github.com/jackc/pgx/v4 v4.18.3
 	github.com/joho/godotenv v1.5.1
 )
+
+require github.com/stretchr/testify v1.11.1 // indirect
 
 require (
 	github.com/jackc/chunkreader/v2 v2.0.1 // indirect
@@ -19,6 +21,6 @@ require (
 	// Descomente a linha abaixo e comente a v0.31.0 para forçar a vulnerabilidade
 	// golang.org/x/crypto v0.20.0 // indirect
 	// Versão Segura (Produção)
-	golang.org/x/crypto v0.31.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/crypto v0.49.0 // indirect
+	golang.org/x/text v0.35.0 // indirect
 )

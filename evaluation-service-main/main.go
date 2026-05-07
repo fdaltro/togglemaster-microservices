@@ -12,6 +12,14 @@ import (
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/go-redis/redis/v8"
 	"github.com/joho/godotenv"
+
+	// Novos imports do OpenTelemetry
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // Contexto global para o Redis
@@ -29,6 +37,19 @@ type App struct {
 
 func main() {
 	_ = godotenv.Load() // Carrega .env para dev local
+
+	// --- INICIALIZAÇÃO DO OPENTELEMETRY ---
+	// O Tracer vai ler as variáveis OTEL_EXPORTER_OTLP_ENDPOINT e OTEL_SERVICE_NAME automaticamente do Kubernetes
+	tp, err := initTracer()
+	if err != nil {
+		log.Fatalf("Falha ao inicializar o OpenTelemetry: %v", err)
+	}
+	// Garante que todos os traces sejam enviados antes do app desligar
+	defer func() {
+		if err := tp.Shutdown(context.Background()); err != nil {
+			log.Printf("Erro ao desligar TracerProvider: %v", err)
+		}
+	}()
 
 	// --- Configuração ---
 	port := os.Getenv("PORT")
@@ -105,9 +126,48 @@ func main() {
 	mux.HandleFunc("/health", app.healthHandler)
 	mux.HandleFunc("/evaluate", app.evaluationHandler)
 
+	// --- ENVELOPAMENTO OPENTELEMETRY ---
+	// Envolvemos o roteador padrão (mux) com o otelhttp para gerar Traces automáticos das requisições HTTP
+	handler := otelhttp.NewHandler(mux, "evaluation-service-http")
+
 	log.Printf("Serviço de Avaliação (Go) rodando na porta %s", port)
 	// nosemgrep: go.lang.security.audit.net.use-tls.use-tls
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// initTracer configura o agente do OpenTelemetry
+func initTracer() (*sdktrace.TracerProvider, error) {
+	ctx := context.Background()
+
+	// Cria um exportador gRPC inseguro (perfeito para rede interna do Kubernetes)
+	exporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithInsecure())
+	if err != nil {
+		return nil, err
+	}
+
+	// Captura os dados do ambiente (como OTEL_SERVICE_NAME definido no ArgoCD)
+	res, err := resource.New(ctx,
+		resource.WithFromEnv(),
+		resource.WithProcess(),
+		resource.WithTelemetrySDK(),
+		resource.WithHost(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cria o provedor de Traces com exportação em lote
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(res),
+	)
+
+	// Define o provedor como global na aplicação
+	otel.SetTracerProvider(tp)
+	// Propaga o contexto entre microsserviços
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+
+	return tp, nil
 }
