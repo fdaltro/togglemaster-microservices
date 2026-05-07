@@ -1,5 +1,5 @@
 # Estágio 1: Build (Compilação)
-FROM python:3.9-slim AS builder
+FROM python:3.11-slim AS builder
 WORKDIR /app
 
 # Instala ferramentas necessárias para compilar drivers (como psycopg2)
@@ -15,7 +15,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Estágio 2: Final (Runtime)
-FROM python:3.9-slim
+FROM python:3.11-slim
 WORKDIR /app
 
 # 1. Instala apenas a biblioteca de execução do Postgres

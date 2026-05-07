@@ -1,12 +1,12 @@
 # Estágio 1: Builder
-FROM python:3.9-slim AS builder
+FROM python:3.11-slim AS builder
 WORKDIR /app
 COPY requirements.txt .
 # Instalamos as dependências em um prefixo limpo
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Estágio 2: Final (Runtime)
-FROM python:3.9-slim
+FROM python:3.11-slim
 
 # 1. Criamos um usuário de sistema sem privilégios e seu grupo
 RUN addgroup --system appgroup && adduser --system --group appuser
