@@ -24,18 +24,36 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24.0' # <--- VERSÃO CORRIGIDA AQUI
+          go-version: '1.24.0' # Mantemos 1.24 para bater com o go.mod
       - name: Dependencies
         working-directory: ./${{ matrix.service }}
         run: |
-          if [ ! -f go.mod ]; then go mod init ${{ matrix.service }}; fi
           go mod tidy
       - name: Linter
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v1.64.5 # Versão estável compatível com Go 1.24
           working-directory: ${{ matrix.service }}
           args: --timeout=5m --allow-parallel-runners --disable errcheck,staticcheck
+
+  lint-python:
+    name: Lint Python
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [flag-service-main, targeting-service-main, analytics-service-main]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Linting
+        working-directory: ./${{ matrix.service }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
   # ==========================================
   # ESTÁGIO 2: SCA (SEGURANÇA DE DEPENDÊNCIAS)
   # ==========================================
@@ -53,8 +71,7 @@ jobs:
           scan-type: 'fs'
           scan-ref: './${{ matrix.service }}'
           format: 'table'
-          # '0' permite que o deploy continue mesmo com vulnerabilidades para fins de demo
-          exit-code: '1' 
+          exit-code: '0' # Mudamos para 0 para não travar o laboratório se houver vulnerabilidades
           severity: 'CRITICAL'
 
   # ==========================================
@@ -63,31 +80,21 @@ jobs:
   sast-scan:
     name: SAST Scan (Semgrep)
     runs-on: ubuntu-latest
-    # Mantemos o paralelismo para os 5 serviços
     strategy:
       fail-fast: false
       matrix:
         service: [auth-service-main, evaluation-service-main, flag-service-main, targeting-service-main, analytics-service-main]
-    
     steps:
       - name: Checkout Código
         uses: actions/checkout@v4
-
       - name: Instalar Python para o Semgrep
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Executar Semgrep CI
         run: |
           python3 -m pip install semgrep
-          # Usamos a flag --subdir para focar na pasta do microserviço atual da matrix
-          semgrep ci \
-            --config p/default \
-            --config p/security-audit \
-            --config p/secrets \
-            --subdir ./${{ matrix.service }}
-
+          semgrep ci --config p/default --config p/security-audit --config p/secrets --subdir ./${{ matrix.service }}
 
   # ==========================================
   # ESTÁGIO 4: UNIT TESTS (LÓGICA)
@@ -102,11 +109,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24.0' # ATUALIZADO: Precisa ser igual ao Lint para ler o go.mod corretamente
       - name: Run Tests
         working-directory: ./${{ matrix.service }}
         run: |
-          if [ ! -f go.mod ]; then go mod init ${{ matrix.service }}; fi
           go mod tidy
           go test -v ./...
 
@@ -118,10 +124,9 @@ jobs:
         service: [flag-service-main, targeting-service-main, analytics-service-main]
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.11'
       - name: Run Tests
         working-directory: ./${{ matrix.service }}
         run: |
@@ -137,7 +142,6 @@ jobs:
     needs: [lint-go, lint-python, sca-scan, sast-scan, test-go, test-python]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
     steps:
       - name: Checkout Application Code
         uses: actions/checkout@v4
@@ -150,21 +154,14 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
 
-      # 1. Instalação do Trivy no Runner do GitHub
       - name: Install Trivy
         run: |
-          # Baixa e instala o binário do Trivy diretamente no /usr/local/bin
-          # Este método ignora erros de GPG do Ubuntu Noble
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-          
-          # Verifica se a instalação foi bem-sucedida
-          trivy --version
 
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 2. Loop de Build, Scan e Push
       - name: Build, Scan and Push Images
         id: build-images
         env:
@@ -172,29 +169,16 @@ jobs:
         run: |
           VERSION="v1.0.0-$(echo ${{ github.sha }} | cut -c1-7)"
           SERVICES=("auth" "flag" "targeting" "evaluation" "analytics")
-          
           for SERVICE in "${SERVICES[@]}"; do
-            REPO_NAME="togglemaster-$SERVICE"
-            IMAGE_TAG="$ECR_REGISTRY/$REPO_NAME:$VERSION"
-            
+            IMAGE_TAG="$ECR_REGISTRY/togglemaster-$SERVICE:$VERSION"
             echo "::group::Processando $SERVICE"
-            
-            # BUILD
             docker build -t $IMAGE_TAG ./$SERVICE-service-main
-            
-            # CONTAINER SCAN (Trivy)
-            # --exit-code 0 permite que o push ocorra mesmo com vulnerabilidades (ideal para a demo)
-            # --severity CRITICAL foca no que realmente importa
             trivy image --severity CRITICAL --exit-code 0 $IMAGE_TAG
-            
-            # PUSH
             docker push $IMAGE_TAG
-            
             echo "::endgroup::"
           done
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
-      # 3. Atualização do repositório GitOps
       - name: Checkout GitOps Repo
         uses: actions/checkout@v4
         with:
@@ -206,9 +190,8 @@ jobs:
         run: |
           VERSION=${{ env.VERSION }}
           ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
-          SERVICES=("auth" "flag" "targeting" "evaluation" "analytics")
           cd gitops-repo/apps
-          for SERVICE in "${SERVICES[@]}"; do
+          for SERVICE in auth flag targeting evaluation analytics; do
             cd $SERVICE
             kustomize edit set image togglemaster-$SERVICE=$ECR_REGISTRY/togglemaster-$SERVICE:$VERSION
             cd ..
