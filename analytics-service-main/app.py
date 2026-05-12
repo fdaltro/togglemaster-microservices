@@ -41,7 +41,7 @@ except Exception as e:
     sys.exit(1)
 
 
-# --- SQS Worker ----
+# --- SQS Worker ---
 
 def process_message(message):
     """ Processa uma única mensagem SQS e a insere no DynamoDB """
