@@ -35,6 +35,8 @@ jobs:
           version: v1.64.5 # Versão estável compatível com Go 1.24
           working-directory: ${{ matrix.service }}
           args: --timeout=5m --allow-parallel-runners --disable errcheck,staticcheck
+          skip-cache: true
+          skip-pkg-cache: true
 
   lint-python:
     name: Lint Python
