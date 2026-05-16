@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/go-redis/redis/extra/redisotel/v8"
 	"github.com/go-redis/redis/v8"
 	"github.com/joho/godotenv"
@@ -21,19 +22,14 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
+// App unificada com todos os atributos esperados pelo evaluator.go e sqs.go
 type App struct {
-	RDB            *redis.Client
-	HTTPClient     *http.Client
-	FlagServiceURL string
-}
-
-type EvalRequest struct {
-	FlagKey string `json:"flag_key"`
-	User    string `json:"user"`
-}
-
-type EvalResponse struct {
-	Enabled bool `json:"enabled"`
+	RedisClient         *redis.Client
+	HttpClient          *http.Client
+	FlagServiceURL      string
+	TargetingServiceURL string
+	SqsSvc              *sqs.SQS
+	SqsQueueURL         string
 }
 
 func main() {
@@ -50,10 +46,10 @@ func main() {
 		}
 	}()
 
-	// --- 2. CONFIGURAÇÃO ---
+	// --- 2. CONFIGURAÇÃO DE VARIÁVEIS ---
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8003" // Porta padrão do evaluation-service
+		port = "8004" 
 	}
 
 	redisAddr := os.Getenv("REDIS_ADDR")
@@ -66,30 +62,47 @@ func main() {
 		flagServiceURL = "http://localhost:8002"
 	}
 
+	targetingServiceURL := os.Getenv("TARGETING_SERVICE_URL")
+	if targetingServiceURL == "" {
+		targetingServiceURL = "http://localhost:8003"
+	}
+
+	sqsQueueURL := os.Getenv("AWS_SQS_URL")
+
 	// --- 3. CONEXÃO COM REDIS (INSTRUMENTADA) ---
 	rdb := redis.NewClient(&redis.Options{
 		Addr: redisAddr,
 	})
-	rdb.AddHook(redisotel.NewTracingHook()) // <-- Hook mágico do OTel para o Redis
+	rdb.AddHook(redisotel.NewTracingHook())
 
-	// --- 4. CLIENTE HTTP (INSTRUMENTADO PARA CHAMADAS DE SAÍDA) ---
+	// --- 4. AWS SQS CLIENT ---
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
+	sqsSvc := sqs.New(sess)
+
+	// --- 5. CLIENTE HTTP (INSTRUMENTADO PARA CHAMADAS EXTERNAS) ---
 	httpClient := &http.Client{
-		Transport: otelhttp.NewTransport(http.DefaultTransport), // <-- Repassa o Trace ID
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
 		Timeout:   5 * time.Second,
 	}
 
+	// --- 6. POPULANDO O APP ---
 	app := &App{
-		RDB:            rdb,
-		HTTPClient:     httpClient,
-		FlagServiceURL: flagServiceURL,
+		RedisClient:         rdb,
+		HttpClient:          httpClient,
+		FlagServiceURL:      flagServiceURL,
+		TargetingServiceURL: targetingServiceURL,
+		SqsSvc:              sqsSvc,
+		SqsQueueURL:         sqsQueueURL,
 	}
 
-	// --- 5. ROTAS ---
+	// --- 7. ROTAS ---
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", app.healthHandler)
-	mux.HandleFunc("/evaluate", app.evaluateHandler)
+	mux.HandleFunc("/evaluate", app.evaluationHandler)
 
-	// --- 6. ENVELOPAMENTO HTTP (PARA CHAMADAS DE ENTRADA) ---
+	// --- 8. ENVELOPAMENTO HTTP PARA RECEBER REQUISIÇÕES ---
 	handler := otelhttp.NewHandler(mux, "evaluation-service-http")
 
 	log.Printf("Serviço de Evaluation (Go) rodando na porta %s", port)
@@ -98,8 +111,6 @@ func main() {
 		log.Fatal(err)
 	}
 }
-
-// --- FUNÇÕES DE APOIO -----
 
 func initTracer() (*sdktrace.TracerProvider, error) {
 	ctx := context.Background()
@@ -126,46 +137,4 @@ func initTracer() (*sdktrace.TracerProvider, error) {
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 	return tp, nil
-}
-
-// --- OS HANDLERS ---
-
-func (app *App) healthHandler(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
-}
-
-func (app *App) evaluateHandler(w http.ResponseWriter, r *http.Request) {
-	var req EvalRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
-		return
-	}
-
-	// 1. Tenta buscar no Redis usando o contexto do OTel
-	cachedValue, err := app.RDB.Get(r.Context(), "flag:"+req.FlagKey).Result()
-	if err == redis.Nil {
-		// Cache Miss: Busca no Flag Service usando o cliente HTTP instrumentado
-		// IMPORTANTE: NewRequestWithContext garante que a linha continue no mapa do Datadog
-		apiReq, _ := http.NewRequestWithContext(r.Context(), "GET", app.FlagServiceURL+"/flags/"+req.FlagKey, nil)
-		
-		resp, err := app.HTTPClient.Do(apiReq)
-		if err != nil {
-			http.Error(w, "Error calling Flag Service", http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
-
-		// Lógica de fallback se não encontrar (exemplo simples)
-		// Neste ponto você incluiria sua regra de negócio para ler a resposta e salvar no Redis
-		json.NewEncoder(w).Encode(EvalResponse{Enabled: true}) // Mock de resposta
-		return
-	} else if err != nil {
-		http.Error(w, "Redis error", http.StatusInternalServerError)
-		return
-	}
-
-	// Retorna do Cache
-	enabled := cachedValue == "true"
-	json.NewEncoder(w).Encode(EvalResponse{Enabled: enabled})
 }
