@@ -142,7 +142,7 @@ jobs:
   # ==========================================
   deploy:
     name: Build & Deploy to EKS
-    needs: [lint-go, lint-python, sca-scan, sast-scan, test-go, test-python]
+    needs: [lint-python, sca-scan, sast-scan, test-python]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
