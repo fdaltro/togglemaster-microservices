@@ -2,8 +2,7 @@
 FROM python:3.11-slim AS builder
 WORKDIR /app
 COPY requirements.txt .
-
-# Instalamos as dependências da aplicação + OpenTelemetry em um prefixo limpo
+# Instalamos as dependências da aplicação em um prefixo limpo
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Estágio 2: Final (Runtime)
@@ -15,27 +14,16 @@ RUN addgroup --system appgroup && adduser --system --group appuser
 WORKDIR /app
 
 # 2. Copiamos as dependências do builder para o local padrão do sistema
-# Isso evita problemas de PATH e permissão
 COPY --from=builder /install /usr/local
 
-# 3. Instalamos os sensores automáticos (Bootstrap) do OpenTelemetry
-# Isso detecta o Flask, Gunicorn, etc., e ativa os rastreadores corretos
-RUN opentelemetry-bootstrap -a install
-
-# 4. Copiamos o código da aplicação já definindo o dono para o appuser
+# 3. Copiamos o código da aplicação já definindo o dono para o appuser
 COPY --chown=appuser:appgroup . .
 
-# 5. Mudamos para o usuário não-root por segurança
+# 4. Mudamos para o usuário não-root por segurança
 USER appuser
 
-# Porta de acesso/health check
+# Porta de health check
 EXPOSE 8005
 
-# 6. Variáveis básicas do OTel (as de conexão estão no Deployment)
-ENV OTEL_SERVICE_NAME="analytics-service"
-ENV OTEL_TRACES_EXPORTER="otlp"
-ENV OTEL_METRICS_EXPORTER="none"
-ENV OTEL_LOGS_EXPORTER="none"
-
-# 7. O Gunicorn agora rodará envelopado pelo agente do OpenTelemetry
-CMD ["opentelemetry-instrument", "gunicorn", "--bind", "0.0.0.0:8005", "app:app"]
+# Execução nativa e direta via Gunicorn, otimizada para o runtime de threads internas
+CMD ["gunicorn", "--bind", "0.0.0.0:8005", "app:app"]

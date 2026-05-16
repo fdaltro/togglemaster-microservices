@@ -3,8 +3,10 @@ Werkzeug==2.2.2
 gunicorn==20.1.0
 python-dotenv==0.21.0
 boto3==1.26.50
-opentelemetry-distro
-opentelemetry-exporter-otlp
-opentelemetry-instrumentation-flask
-opentelemetry-instrumentation-wsgi
-opentelemetry-instrumentation-botocore
+
+# --- DEPENDÊNCIAS DO OPENTELEMETRY ---
+opentelemetry-api==1.24.0
+opentelemetry-sdk==1.24.0
+opentelemetry-exporter-otlp==1.24.0
+opentelemetry-instrumentation-flask==0.45b0
+opentelemetry-instrumentation-botocore==0.45b0
