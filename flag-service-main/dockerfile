@@ -36,5 +36,5 @@ USER appuser
 # Porta definida no seu app.py
 EXPOSE 8002
 
-# Execução via Gunicorn (contexto appuser) com o Agente OTel
-CMD ["opentelemetry-instrument", "gunicorn", "--bind", "0.0.0.0:8002", "app:app"]
+# Execução limpa e direta via Gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:8002", "app:app"]
