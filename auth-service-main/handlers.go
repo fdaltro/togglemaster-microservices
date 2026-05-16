@@ -39,9 +39,10 @@ func (a *App) validateKeyHandler(w http.ResponseWriter, r *http.Request) {
 	// Calcula o hash da chave recebida
 	keyHash := hashAPIKey(keyString)
 
-	// Verifica se o hash existe no banco de dados
+	// Verifica se o hash existe no banco de dados (COM CONTEXTO DO OPENTELEMETRY)
 	var id int
-	err := a.DB.QueryRow("SELECT id FROM api_keys WHERE key_hash = $1 AND is_active = true", keyHash).Scan(&id)
+	err := a.DB.QueryRowContext(r.Context(), "SELECT id FROM api_keys WHERE key_hash = $1 AND is_active = true", keyHash).Scan(&id)
+	
 	if err != nil {
 		// Se não encontrar (sql.ErrNoRows), ou qualquer outro erro, a chave é inválida
 		log.Printf("Falha na validação da chave (hash: %s...): %v", keyHash[:6], err)
@@ -80,9 +81,10 @@ func (a *App) createKeyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	newKeyHash := hashAPIKey(newKey)
 
-	// Salva o hash no banco de dados
+	// Salva o hash no banco de dados (COM CONTEXTO DO OPENTELEMETRY)
 	var newID int
-	err = a.DB.QueryRow(
+	err = a.DB.QueryRowContext(
+		r.Context(),
 		"INSERT INTO api_keys (name, key_hash) VALUES ($1, $2) RETURNING id",
 		req.Name, newKeyHash,
 	).Scan(&newID)
@@ -114,7 +116,7 @@ func (a *App) masterKeyAuthMiddleware(next http.Handler) http.Handler {
 			http.Error(w, "Acesso não autorizado", http.StatusForbidden)
 			return
 		}
-		// Se a chave for válida, continua para o handler principal
+		// Se a chave for válida, continua para o handler principal repassando a requisição com o Contexto
 		next.ServeHTTP(w, r)
 	})
 }
