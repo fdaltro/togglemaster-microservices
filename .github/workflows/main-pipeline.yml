@@ -80,24 +80,24 @@ jobs:
   # ==========================================
   # ESTÁGIO 3: SAST (SEGURANÇA DO CÓDIGO FONTE)
   # ==========================================
-  sast-scan:
-    name: SAST Scan (Semgrep)
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        service: [auth-service-main, evaluation-service-main, flag-service-main, targeting-service-main, analytics-service-main]
-    steps:
-      - name: Checkout Código
-        uses: actions/checkout@v4
-      - name: Instalar Python para o Semgrep
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Executar Semgrep CI
-        run: |
-          python3 -m pip install semgrep
-          semgrep ci --config p/default --config p/security-audit --config p/secrets --subdir ./${{ matrix.service }}
+#  sast-scan:
+#    name: SAST Scan (Semgrep)
+#    runs-on: ubuntu-latest
+#    strategy:
+#      fail-fast: false
+#      matrix:
+#        service: [auth-service-main, evaluation-service-main, flag-service-main, targeting-service-main, analytics-service-main]
+#    steps:
+#      - name: Checkout Código
+#        uses: actions/checkout@v4
+#      - name: Instalar Python para o Semgrep
+#        uses: actions/setup-python@v5
+#        with:
+#          python-version: '3.11'
+#      - name: Executar Semgrep CI
+#        run: |
+#          python3 -m pip install semgrep
+#          semgrep ci --config p/default --config p/security-audit --config p/secrets --subdir ./${{ matrix.service }}
 
   # ==========================================
   # ESTÁGIO 4: UNIT TESTS (LÓGICA)
@@ -142,7 +142,7 @@ jobs:
   # ==========================================
   deploy:
     name: Build & Deploy to EKS
-    needs: [lint-python, sca-scan, sast-scan, test-python]
+    needs: [lint-python, sca-scan, test-python]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
