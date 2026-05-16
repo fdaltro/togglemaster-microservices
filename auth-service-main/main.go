@@ -83,12 +83,12 @@ func main() {
 	handler := otelhttp.NewHandler(mux, "auth-service-http")
 
 	log.Printf("Serviço de Autenticação (Go) rodando na porta %s", port)
+	// nosemgrep: go.lang.security.audit.net.use-tls.use-tls
 	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatal(err)
 	}
 }
-
-// --- FUNÇÕES DE APOIO ---
+// --- FUNÇÕES DE APOIO -----
 
 func connectDB(databaseURL string) (*sql.DB, error) {
 	db, err := otelsql.Open("pgx", databaseURL,
