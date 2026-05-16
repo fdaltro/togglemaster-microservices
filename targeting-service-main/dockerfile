@@ -9,7 +9,6 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-
 # Instalamos as dependências em um prefixo customizado (/install) 
 # para que fiquem acessíveis ao usuário comum depois
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
@@ -38,5 +37,5 @@ USER appuser
 # Porta de serviço
 EXPOSE 8003
 
-# Execução via Gunicorn com o Agente OTel
-CMD ["opentelemetry-instrument", "gunicorn", "--bind", "0.0.0.0:8003", "app:app"]
+# CORREÇÃO: Execução direta do Gunicorn sem o agente externo concorrente
+CMD ["gunicorn", "--bind", "0.0.0.0:8003", "app:app"]

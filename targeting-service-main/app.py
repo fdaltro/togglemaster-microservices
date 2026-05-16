@@ -10,6 +10,20 @@ from dotenv import load_dotenv
 from functools import wraps
 import logging
 
+# --- 1. IMPORTAÇÕES DA CAMADA DE OBSERVABILIDADE ---
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.propagate import set_global_textmap
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+# --- 2. IMPORTAÇÕES DOS INSTRUMENTADORES NATIVOS ---
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.instrumentation.requests import RequestsInstrumentor
+from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
+
 # Configura o logging
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -18,6 +32,29 @@ log = logging.getLogger(__name__)
 load_dotenv() 
 
 app = Flask(__name__)
+
+# --- 3. CONFIGURAÇÃO DO TRACER (ALINHADO COM DEPLOYMENT.YAML) ---
+# Força o uso do padrão W3C (traceparent) para conectar os rastros vindos do Go
+set_global_textmap(TraceContextTextMapPropagator())
+
+otel_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector.observabilidade.svc.cluster.local:4317")
+otel_service = os.getenv("OTEL_SERVICE_NAME", "targeting-service")
+
+resource = Resource.create(attributes={
+    "service.name": otel_service,
+    "deployment.environment": "prod"
+})
+
+provider = TracerProvider(resource=resource)
+processor = BatchSpanProcessor(OTLPSpanExporter(endpoint=otel_endpoint, insecure=True))
+provider.add_span_processor(processor)
+trace.set_tracer_provider(provider)
+
+# --- 4. ATIVAÇÃO DAS INSTRUMENTAÇÕES EM MEMÓRIA ---
+# IMPORTANTE: O Psycopg2 precisa ser instrumentado ANTES do SimpleConnectionPool abaixo
+FlaskInstrumentor().instrument_app(app)
+RequestsInstrumentor().instrument()
+Psycopg2Instrumentor().instrument()
 
 # --- Configuração ---
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -46,6 +83,7 @@ def require_auth(f):
         
         try:
             validate_url = f"{AUTH_SERVICE_URL}/validate"
+            # O RequestsInstrumentor injetará o TraceID no cabeçalho desta requisição automaticamente
             response = requests.get(validate_url, headers={"Authorization": auth_header}, timeout=3)
             
             if response.status_code != 200:
@@ -166,7 +204,7 @@ def update_rule(flag_name):
             
         updated_rule = cur.fetchone()
         conn.commit()
-        log.info(f"Regra para '{flag_name}' atualizada com sucesso.")
+        log.info(f"Regra para '{flag_name}' updated com sucesso.")
         return jsonify(updated_rule), 200
     except Exception as e:
         if conn: conn.rollback()
@@ -185,7 +223,6 @@ def delete_rule(flag_name):
     try:
         conn = pool.getconn()
         cur = conn.cursor()
-        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
         cur.execute("DELETE FROM targeting_rules WHERE flag_name = %s", (flag_name,))
         
         if cur.rowcount == 0:
@@ -204,5 +241,4 @@ def delete_rule(flag_name):
 
 if __name__ == '__main__':
     port = int(os.getenv("PORT", 8003))
-    # nosemgrep: python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host
     app.run(host='0.0.0.0', port=port, debug=False)
