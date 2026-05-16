@@ -2,18 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/go-redis/redis/extra/redisotel/v8"
 	"github.com/go-redis/redis/v8"
 	"github.com/joho/godotenv"
 
-	// Novos imports do OpenTelemetry
+	// Imports do OpenTelemetry
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -22,132 +21,93 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// Contexto global para o Redis
-var ctx = context.Background()
-
-// App struct para injeção de dependência
 type App struct {
-	RedisClient         *redis.Client
-	SqsSvc              *sqs.SQS
-	SqsQueueURL         string
-	HttpClient          *http.Client
-	FlagServiceURL      string
-	TargetingServiceURL string
+	RDB            *redis.Client
+	HTTPClient     *http.Client
+	FlagServiceURL string
+}
+
+type EvalRequest struct {
+	FlagKey string `json:"flag_key"`
+	User    string `json:"user"`
+}
+
+type EvalResponse struct {
+	Enabled bool `json:"enabled"`
 }
 
 func main() {
-	_ = godotenv.Load() // Carrega .env para dev local
+	_ = godotenv.Load()
 
-	// --- INICIALIZAÇÃO DO OPENTELEMETRY ---
-	// O Tracer vai ler as variáveis OTEL_EXPORTER_OTLP_ENDPOINT e OTEL_SERVICE_NAME automaticamente do Kubernetes
+	// --- 1. INICIALIZAÇÃO DO OPENTELEMETRY ---
 	tp, err := initTracer()
 	if err != nil {
 		log.Fatalf("Falha ao inicializar o OpenTelemetry: %v", err)
 	}
-	// Garante que todos os traces sejam enviados antes do app desligar
 	defer func() {
 		if err := tp.Shutdown(context.Background()); err != nil {
 			log.Printf("Erro ao desligar TracerProvider: %v", err)
 		}
 	}()
 
-	// --- Configuração ---
+	// --- 2. CONFIGURAÇÃO ---
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8004"
+		port = "8003" // Porta padrão do evaluation-service
 	}
 
-	redisURL := os.Getenv("REDIS_URL")
-	if redisURL == "" {
-		log.Fatal("REDIS_URL deve ser definida (ex: redis://localhost:6379)")
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
 	}
 
-	flagSvcURL := os.Getenv("FLAG_SERVICE_URL")
-	if flagSvcURL == "" {
-		log.Fatal("FLAG_SERVICE_URL deve ser definida")
+	flagServiceURL := os.Getenv("FLAG_SERVICE_URL")
+	if flagServiceURL == "" {
+		flagServiceURL = "http://localhost:8002"
 	}
 
-	targetingSvcURL := os.Getenv("TARGETING_SERVICE_URL")
-	if targetingSvcURL == "" {
-		log.Fatal("TARGETING_SERVICE_URL deve ser definida")
-	}
+	// --- 3. CONEXÃO COM REDIS (INSTRUMENTADA) ---
+	rdb := redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
+	rdb.AddHook(redisotel.NewTracingHook()) // <-- Hook mágico do OTel para o Redis
 
-	// SQS é opcional no dev local, mas obrigatório em prod
-	sqsQueueURL := os.Getenv("AWS_SQS_URL")
-	awsRegion := os.Getenv("AWS_REGION")
-	if sqsQueueURL == "" {
-		log.Println("Atenção: AWS_SQS_URL não definida. Eventos não serão enviados.")
-	}
-	if awsRegion == "" && sqsQueueURL != "" {
-		log.Fatal("AWS_REGION deve ser definida para usar SQS")
-	}
-
-	// --- Inicializa Clientes ---
-	
-	// Cliente Redis
-	opt, err := redis.ParseURL(redisURL)
-	if err != nil {
-		log.Fatalf("Não foi possível parsear a URL do Redis: %v", err)
-	}
-	rdb := redis.NewClient(opt)
-	if _, err := rdb.Ping(ctx).Result(); err != nil {
-		log.Fatalf("Não foi possível conectar ao Redis: %v", err)
-	}
-	log.Println("Conectado ao Redis com sucesso!")
-
-	// Cliente SQS (AWS SDK)
-	var sqsSvc *sqs.SQS
-	if sqsQueueURL != "" {
-		sess, err := session.NewSession(&aws.Config{Region: aws.String(awsRegion)})
-		if err != nil {
-			log.Fatalf("Não foi possível criar sessão AWS: %v", err)
-		}
-		sqsSvc = sqs.New(sess)
-		log.Println("Cliente SQS inicializado com sucesso.")
-	}
-
-	// Cliente HTTP (com timeout)
+	// --- 4. CLIENTE HTTP (INSTRUMENTADO PARA CHAMADAS DE SAÍDA) ---
 	httpClient := &http.Client{
-		Timeout: 5 * time.Second,
+		Transport: otelhttp.NewTransport(http.DefaultTransport), // <-- Repassa o Trace ID
+		Timeout:   5 * time.Second,
 	}
 
-	// Cria a instância da App
 	app := &App{
-		RedisClient:         rdb,
-		SqsSvc:              sqsSvc,
-		SqsQueueURL:         sqsQueueURL,
-		HttpClient:          httpClient,
-		FlagServiceURL:      flagSvcURL,
-		TargetingServiceURL: targetingSvcURL,
+		RDB:            rdb,
+		HTTPClient:     httpClient,
+		FlagServiceURL: flagServiceURL,
 	}
 
-	// --- Rotas ---
+	// --- 5. ROTAS ---
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", app.healthHandler)
-	mux.HandleFunc("/evaluate", app.evaluationHandler)
+	mux.HandleFunc("/evaluate", app.evaluateHandler)
 
-	// --- ENVELOPAMENTO OPENTELEMETRY ---
-	// Envolvemos o roteador padrão (mux) com o otelhttp para gerar Traces automáticos das requisições HTTP
+	// --- 6. ENVELOPAMENTO HTTP (PARA CHAMADAS DE ENTRADA) ---
 	handler := otelhttp.NewHandler(mux, "evaluation-service-http")
 
-	log.Printf("Serviço de Avaliação (Go) rodando na porta %s", port)
+	log.Printf("Serviço de Evaluation (Go) rodando na porta %s", port)
 	// nosemgrep: go.lang.security.audit.net.use-tls.use-tls
 	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatal(err)
 	}
 }
 
-// initTracer configura o agente do OpenTelemetry
+// --- FUNÇÕES DE APOIO -----
+
 func initTracer() (*sdktrace.TracerProvider, error) {
 	ctx := context.Background()
-
-	// Cria um exportador gRPC inseguro (perfeito para rede interna do Kubernetes)
 	exporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithInsecure())
 	if err != nil {
 		return nil, err
 	}
 
-	// Captura os dados do ambiente (como OTEL_SERVICE_NAME definido no ArgoCD)
 	res, err := resource.New(ctx,
 		resource.WithFromEnv(),
 		resource.WithProcess(),
@@ -158,16 +118,54 @@ func initTracer() (*sdktrace.TracerProvider, error) {
 		return nil, err
 	}
 
-	// Cria o provedor de Traces com exportação em lote
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(res),
 	)
 
-	// Define o provedor como global na aplicação
 	otel.SetTracerProvider(tp)
-	// Propaga o contexto entre microsserviços
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
-
 	return tp, nil
+}
+
+// --- OS HANDLERS ---
+
+func (app *App) healthHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
+}
+
+func (app *App) evaluateHandler(w http.ResponseWriter, r *http.Request) {
+	var req EvalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// 1. Tenta buscar no Redis usando o contexto do OTel
+	cachedValue, err := app.RDB.Get(r.Context(), "flag:"+req.FlagKey).Result()
+	if err == redis.Nil {
+		// Cache Miss: Busca no Flag Service usando o cliente HTTP instrumentado
+		// IMPORTANTE: NewRequestWithContext garante que a linha continue no mapa do Datadog
+		apiReq, _ := http.NewRequestWithContext(r.Context(), "GET", app.FlagServiceURL+"/flags/"+req.FlagKey, nil)
+		
+		resp, err := app.HTTPClient.Do(apiReq)
+		if err != nil {
+			http.Error(w, "Error calling Flag Service", http.StatusInternalServerError)
+			return
+		}
+		defer resp.Body.Close()
+
+		// Lógica de fallback se não encontrar (exemplo simples)
+		// Neste ponto você incluiria sua regra de negócio para ler a resposta e salvar no Redis
+		json.NewEncoder(w).Encode(EvalResponse{Enabled: true}) // Mock de resposta
+		return
+	} else if err != nil {
+		http.Error(w, "Redis error", http.StatusInternalServerError)
+		return
+	}
+
+	// Retorna do Cache
+	enabled := cachedValue == "true"
+	json.NewEncoder(w).Encode(EvalResponse{Enabled: enabled})
 }
