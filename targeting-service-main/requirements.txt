@@ -9,3 +9,5 @@ opentelemetry-exporter-otlp
 opentelemetry-instrumentation-flask
 opentelemetry-instrumentation-wsgi
 opentelemetry-instrumentation-botocore
+opentelemetry-instrumentation-requests # <-- Captura a chamada para o AUTH_SERVICE
+opentelemetry-instrumentation-psycopg2 # <-- Desenha o ícone do PostgreSQL no mapa
