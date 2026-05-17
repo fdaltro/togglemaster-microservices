@@ -33,7 +33,7 @@ COPY --chown=appuser:appgroup . .
 # 5. A correção do Semgrep: Mudamos para o usuário não-privilegiado
 USER appuser
 
-# Porta definida no seu app.py
+# Porta definida no seu app.py 1
 EXPOSE 8002
 
 # Execução limpa e direta via Gunicorn
