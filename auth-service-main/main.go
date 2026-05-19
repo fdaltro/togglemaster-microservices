@@ -11,11 +11,13 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/uptrace/opentelemetry-go-extra/otelsql"
 
-	// Imports do OpenTelemetry
+	// Imports do OpenTelemetry (Traces + Metrics)
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
@@ -29,10 +31,10 @@ type App struct {
 func main() {
 	_ = godotenv.Load()
 
-	// --- 1. INICIALIZAÇÃO DO OPENTELEMETRY ---
+	// --- 1. INICIALIZAÇÃO DO OPENTELEMETRY (TRACES) ---
 	tp, err := initTracer()
 	if err != nil {
-		log.Fatalf("Falha ao inicializar o OpenTelemetry: %v", err)
+		log.Fatalf("Falha ao inicializar o OpenTelemetry Tracer: %v", err)
 	}
 	defer func() {
 		if err := tp.Shutdown(context.Background()); err != nil {
@@ -40,7 +42,18 @@ func main() {
 		}
 	}()
 
-	// --- 2. CONFIGURAÇÃO ---
+	// --- 2. INICIALIZAÇÃO DO OPENTELEMETRY (METRICS) ---
+	mp, err := initMeter()
+	if err != nil {
+		log.Fatalf("Falha ao inicializar o OpenTelemetry Metrics: %v", err)
+	}
+	defer func() {
+		if err := mp.Shutdown(context.Background()); err != nil {
+			log.Printf("Erro ao desligar MeterProvider: %v", err)
+		}
+	}()
+
+	// --- 3. CONFIGURAÇÃO ---
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8001"
@@ -56,7 +69,7 @@ func main() {
 		log.Fatal("MASTER_KEY deve ser definida")
 	}
 
-	// --- 3. CONEXÃO COM O BANCO (INSTRUMENTADA) ---
+	// --- 4. CONEXÃO COM O BANCO (INSTRUMENTADA) ---
 	db, err := connectDB(databaseURL)
 	if err != nil {
 		log.Fatalf("Não foi possível conectar ao banco de dados: %v", err)
@@ -68,14 +81,14 @@ func main() {
 		MasterKey: masterKey,
 	}
 
-	// --- 4. ROTAS ---
+	// --- 5. ROTAS ---
 	mux := http.NewServeMux()
 	// O compilador do Go vai buscar essas funções automaticamente no seu arquivo handlers.go
 	mux.HandleFunc("/health", app.healthHandler)
 	mux.HandleFunc("/validate", app.validateKeyHandler)
 	mux.Handle("/admin/keys", app.masterKeyAuthMiddleware(http.HandlerFunc(app.createKeyHandler)))
 
-	// --- 5. ENVELOPAMENTO HTTP ---
+	// --- 6. ENVELOPAMENTO HTTP ---
 	handler := otelhttp.NewHandler(mux, "auth-service-http")
 
 	log.Printf("Serviço de Autenticação (Go) rodando na porta %s", port)
@@ -126,4 +139,34 @@ func initTracer() (*sdktrace.TracerProvider, error) {
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 	return tp, nil
+}
+
+// 🔥 NOVA FUNÇÃO: Inicializa a geração de métricas numéricas (APM)
+func initMeter() (*metric.MeterProvider, error) {
+	ctx := context.Background()
+	
+	// Cria o exportador OTLP via gRPC para a porta 4317
+	exporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithInsecure())
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := resource.New(ctx,
+		resource.WithFromEnv(),
+		resource.WithProcess(),
+		resource.WithTelemetrySDK(),
+		resource.WithHost(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cria o provedor que fará a leitura periódica das métricas do otelhttp e enviará ao Collector
+	mp := metric.NewMeterProvider(
+		metric.WithReader(metric.NewPeriodicReader(exporter)),
+		metric.WithResource(res),
+	)
+
+	otel.SetMeterProvider(mp)
+	return mp, nil
 }
