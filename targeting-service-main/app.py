@@ -11,10 +11,16 @@ from functools import wraps
 import logging
 
 # --- 1. IMPORTAÇÕES DA CAMADA DE OBSERVABILIDADE ---
-from opentelemetry import trace
+from opentelemetry import trace, metrics
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+# Novos imports para o Motor de Métricas
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
@@ -33,7 +39,7 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# --- 3. CONFIGURAÇÃO DO TRACER (ALINHADO COM DEPLOYMENT.YAML) ---
+# --- 3. CONFIGURAÇÃO DO TRACER E METER ---
 # Força o uso do padrão W3C (traceparent) para conectar os rastros vindos do Go
 set_global_textmap(TraceContextTextMapPropagator())
 
@@ -45,10 +51,19 @@ resource = Resource.create(attributes={
     "deployment.environment": "prod"
 })
 
+# A. Rastreamento (Traces)
 provider = TracerProvider(resource=resource)
 processor = BatchSpanProcessor(OTLPSpanExporter(endpoint=otel_endpoint, insecure=True))
 provider.add_span_processor(processor)
 trace.set_tracer_provider(provider)
+
+# B. Métricas (APM) - Exportação a cada 5 segundos
+metric_reader = PeriodicExportingMetricReader(
+    OTLPMetricExporter(endpoint=otel_endpoint, insecure=True),
+    export_interval_millis=5000
+)
+meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+metrics.set_meter_provider(meter_provider)
 
 # --- 4. ATIVAÇÃO DAS INSTRUMENTAÇÕES EM MEMÓRIA ---
 # IMPORTANTE: O Psycopg2 precisa ser instrumentado ANTES do SimpleConnectionPool abaixo

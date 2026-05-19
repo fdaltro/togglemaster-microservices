@@ -16,8 +16,10 @@ import (
 	// Imports do OpenTelemetry
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -35,7 +37,7 @@ type App struct {
 func main() {
 	_ = godotenv.Load()
 
-	// --- 1. INICIALIZAÇÃO DO OPENTELEMETRY ---
+	// --- 1. INICIALIZAÇÃO DO OPENTELEMETRY (TRACES) ---
 	tp, err := initTracer()
 	if err != nil {
 		log.Fatalf("Falha ao inicializar o OpenTelemetry: %v", err)
@@ -43,6 +45,17 @@ func main() {
 	defer func() {
 		if err := tp.Shutdown(context.Background()); err != nil {
 			log.Printf("Erro ao desligar TracerProvider: %v", err)
+		}
+	}()
+
+	// --- INICIALIZAÇÃO DO OPENTELEMETRY (METRICS) ---
+	mp, err := initMeter()
+	if err != nil {
+		log.Fatalf("Falha ao inicializar o OpenTelemetry Metrics: %v", err)
+	}
+	defer func() {
+		if err := mp.Shutdown(context.Background()); err != nil {
+			log.Printf("Erro ao desligar MeterProvider: %v", err)
 		}
 	}()
 
@@ -137,4 +150,35 @@ func initTracer() (*sdktrace.TracerProvider, error) {
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 	return tp, nil
+}
+
+// Inicializa a geração de métricas numéricas (APM)
+func initMeter() (*metric.MeterProvider, error) {
+	ctx := context.Background()
+	
+	exporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithInsecure())
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := resource.New(ctx,
+		resource.WithFromEnv(),
+		resource.WithProcess(),
+		resource.WithTelemetrySDK(),
+		resource.WithHost(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Exporta os dados a cada 5 segundos
+	reader := metric.NewPeriodicReader(exporter, metric.WithInterval(5*time.Second))
+
+	mp := metric.NewMeterProvider(
+		metric.WithReader(reader),
+		metric.WithResource(res),
+	)
+
+	otel.SetMeterProvider(mp)
+	return mp, nil
 }

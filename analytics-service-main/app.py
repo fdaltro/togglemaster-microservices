@@ -10,11 +10,17 @@ from botocore.exceptions import NoCredentialsError, ClientError
 from flask import Flask, jsonify
 from dotenv import load_dotenv
 
-# --- 1. IMPORTAÇÕES DA CAMADA DE OBSERVABILIDADE ---
-from opentelemetry import trace
+# --- 1. IMPORTAÇÕES DA CAMADA DE OBSERVABILIDADE (TRACES E METRICS) ---
+from opentelemetry import trace, metrics
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+# Novos imports para o Motor de Métricas
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
@@ -30,9 +36,7 @@ log = logging.getLogger(__name__)
 # Carrega .env para desenvolvimento local
 load_dotenv()
 
-# --- 3. CONFIGURAÇÃO DO TRACER GLOBAL ---
-set_global_textmap(TraceContextTextMapPropagator())
-
+# --- 3. CONFIGURAÇÃO DE RECURSOS (NOME DO SERVIÇO) ---
 otel_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector.observabilidade.svc.cluster.local:4317")
 otel_service = os.getenv("OTEL_SERVICE_NAME", "analytics-service")
 
@@ -40,6 +44,9 @@ resource = Resource.create(attributes={
     "service.name": otel_service,
     "deployment.environment": "prod"
 })
+
+# --- 4. CONFIGURAÇÃO DO TRACER GLOBAL (Rastreamento) ---
+set_global_textmap(TraceContextTextMapPropagator())
 
 provider = TracerProvider(resource=resource)
 processor = BatchSpanProcessor(OTLPSpanExporter(endpoint=otel_endpoint, insecure=True))
@@ -49,11 +56,28 @@ trace.set_tracer_provider(provider)
 # Inicializa o rastreador especializado para processamento assíncrono
 tracer = trace.get_tracer("sqs-worker-tracer")
 
-# --- 4. ATIVAÇÃO DAS EXTENSÕES ---
-FlaskInstrumentor().instrument_app(Flask(__name__))
+# --- 5. CONFIGURAÇÃO DO METER GLOBAL (Métricas) ---
+# Exporta as métricas a cada 5 segundos (5000ms) seguindo o padrão que fizemos no Go
+metric_reader = PeriodicExportingMetricReader(
+    OTLPMetricExporter(endpoint=otel_endpoint, insecure=True),
+    export_interval_millis=5000
+)
+meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+metrics.set_meter_provider(meter_provider)
+
+# Cria um medidor customizado para o worker do SQS
+meter = metrics.get_meter("sqs-worker-meter")
+messages_processed_counter = meter.create_counter(
+    "sqs_messages_processed_total",
+    description="Total de mensagens SQS processadas com sucesso ou erro"
+)
+
+# --- 6. ATIVAÇÃO DAS EXTENSÕES AUTOMÁTICAS ---
+app = Flask(__name__)
+FlaskInstrumentor().instrument_app(app)
 BotocoreInstrumentor().instrument() # Intercepta o ciclo de vida do Boto3 automaticamente
 
-# --- Configuração ---
+# --- Configuração AWS ---
 AWS_REGION = os.getenv("AWS_REGION")
 SQS_QUEUE_URL = os.getenv("AWS_SQS_URL")
 DYNAMODB_TABLE_NAME = os.getenv("AWS_DYNAMODB_TABLE")
@@ -81,32 +105,26 @@ except Exception as e:
 def process_message(message):
     """ Processa uma única mensagem SQS e a insere no DynamoDB reconstruindo o rastro OTel """
     
-    # 5. RECONSTRUÇÃO DO CONTEXTO: Extrai os cabeçalhos injetados pelo Go de dentro dos MessageAttributes
+    # RECONSTRUÇÃO DO CONTEXTO: Extrai os cabeçalhos injetados pelo Go de dentro dos MessageAttributes
     carrier = {}
     if 'MessageAttributes' in message:
         for key, attr in message['MessageAttributes'].items():
             if 'StringValue' in attr:
                 carrier[key] = attr['StringValue']
-                carrier[key.lower()] = attr['StringValue'] # Proteção contra variações de caixa (traceparent)
+                carrier[key.lower()] = attr['StringValue']
 
-    # Extrai o contexto pai baseado nos metadados da mensagem
     parent_context = TraceContextTextMapPropagator().extract(carrier=carrier)
 
-    # Abre o escopo do Span acoplado ao rastro que veio da fila
     with tracer.start_as_current_span("process_sqs_message", context=parent_context) as span:
         try:
             log.info(f"Processando mensagem ID: {message['MessageId']}")
             body = json.loads(message['Body'])
             
-            # Adiciona tags ricas para o Service Map do Datadog e Jaeger
             span.set_attribute("messaging.message_id", message['MessageId'])
             span.set_attribute("feature_flag.name", body.get('flag_name', 'unknown'))
             span.set_attribute("messaging.destination", SQS_QUEUE_URL.split('/')[-1])
             
-            # Gera um ID único para o item no DynamoDB
             event_id = str(uuid.uuid4())
-            
-            # Constrói o item no formato do DynamoDB
             item = {
                 'event_id': {'S': event_id},
                 'user_id': {'S': body['user_id']},
@@ -115,7 +133,6 @@ def process_message(message):
                 'timestamp': {'S': body['timestamp']}
             }
             
-            # Insere no DynamoDB (Capturado automaticamente pelo BotocoreInstrumentor)
             dynamodb_client.put_item(
                 TableName=DYNAMODB_TABLE_NAME,
                 Item=item
@@ -123,7 +140,9 @@ def process_message(message):
             
             log.info(f"Evento {event_id} (Flag: {body['flag_name']}) salvo no DynamoDB.")
             
-            # Se tudo deu certo, deleta a mensagem da fila
+            # 🔥 MÉTRICA: Incrementa sucesso
+            messages_processed_counter.add(1, {"status": "success", "flag_name": body.get('flag_name', 'unknown')})
+            
             sqs_client.delete_message(
                 QueueUrl=SQS_QUEUE_URL,
                 ReceiptHandle=message['ReceiptHandle']
@@ -132,24 +151,25 @@ def process_message(message):
         except json.JSONDecodeError as e:
             log.error(f"Erro ao decodificar JSON da mensagem ID: {message['MessageId']}")
             span.record_exception(e)
+            messages_processed_counter.add(1, {"status": "error_decode", "flag_name": "unknown"})
         except ClientError as e:
             log.error(f"Erro do Boto3 (DynamoDB ou SQS) ao processar {message['MessageId']}: {e}")
             span.record_exception(e)
+            messages_processed_counter.add(1, {"status": "error_boto3", "flag_name": body.get('flag_name', 'unknown')})
         except Exception as e:
             log.error(f"Erro inesperado ao processar {message['MessageId']}: {e}")
             span.record_exception(e)
+            messages_processed_counter.add(1, {"status": "error_generic", "flag_name": "unknown"})
 
 def sqs_worker_loop():
-    """ Loop principal do worker que ouve a fila SQS """
     log.info("Iniciando o worker SQS...")
     while True:
         try:
-            # Long-polling: Forçamos a busca incluindo os MessageAttributeNames do OpenTelemetry
             response = sqs_client.receive_message(
                 QueueUrl=SQS_QUEUE_URL,
                 MaxNumberOfMessages=10,
                 WaitTimeSeconds=20,
-                MessageAttributeNames=['*'] # CRUCIAL: Traz os cabeçalhos OTel anexados pela mensagem do Go
+                MessageAttributeNames=['*'] 
             )
             
             messages = response.get('Messages', [])
@@ -168,18 +188,13 @@ def sqs_worker_loop():
             log.error(f"Erro inesperado no loop principal do SQS: {e}")
             time.sleep(10)
 
-# --- Servidor Flask (Apenas para Health Check) ---
-
-app = Flask(__name__)
+# --- Servidor Flask ---
 
 @app.route('/health')
 def health():
     return jsonify({"status": "ok"})
 
-# --- Inicialização ---
-
 def start_worker():
-    """ Inicia o worker SQS em uma thread separada """
     worker_thread = threading.Thread(target=sqs_worker_loop, daemon=True)
     worker_thread.start()
 
